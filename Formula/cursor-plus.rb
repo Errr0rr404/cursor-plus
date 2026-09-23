@@ -1,9 +1,9 @@
 class CursorPlus < Formula
   desc "Voice + click-to-caret + TTS + screenshots — drop-in wrapper for the Cursor Agent CLI"
   homepage "https://github.com/Errr0rr404/cursor-plus"
-  url "https://registry.npmjs.org/cursor-plus/-/cursor-plus-#{version}.tgz"
-  version "0.1.2"
-  sha256 "5e74e1ded3c874a550b45c7b8877a58e9d73103e0097e4ad0502458cc15ac3dd"
+  url "https://registry.npmjs.org/cursor-plus/-/cursor-plus-0.1.4.tgz"
+  version "0.1.4"
+  sha256 "07f41dc5042d31212fce1948f25c6597c2fa49c9f4b552fee49bff536aac1560"
   license "MIT"
 
   depends_on "node" => :build
@@ -11,14 +11,21 @@ class CursorPlus < Formula
   depends_on "whisper-cpp"
 
   def install
-    system "npm", "install", *Language::Node.std_npm_args(libexec: "vendor")
-    bin.install_symlink Dir["#{libexec}/vendor/bin/*"]
+    # Install from the npm registry (not from the local tarball) so the
+    # bin shim resolves to a real node_modules/cursor-plus directory
+    # rather than a symlink into a brew-temp scratch dir.
+    system "npm", "install", "--prefix", libexec, "cursor-plus@0.1.4"
+
+    # npm --prefix installs the package into libexec/node_modules/<pkg> and
+    # creates bin shims in libexec/node_modules/.bin. Symlink them into
+    # Homebrew's bin/ so `cursor+` ends up on PATH.
+    bin.install_symlink Dir["#{libexec}/node_modules/.bin/*"]
 
     # node-pty ships a prebuilt spawn-helper without the executable bit on
     # macOS / Linux. Mirror copilot-plus and chmod it as part of install so
     # Homebrew users don't hit "posix_spawnp failed" on first run.
     platform = "#{OS.mac? ? "darwin" : "linux"}-#{Hardware::CPU.arm? ? "arm64" : "x64"}"
-    helper = "#{libexec}/vendor/node_modules/node-pty/prebuilds/#{platform}/spawn-helper"
+    helper = "#{libexec}/node_modules/node-pty/prebuilds/#{platform}/spawn-helper"
     if File.exist?(helper)
       File.chmod(0755, helper)
     end
