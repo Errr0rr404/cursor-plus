@@ -11,6 +11,8 @@
  */
 
 const { execFile, execFileSync, spawnSync } = require('child_process');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
@@ -28,6 +30,7 @@ const WHICH = IS_WIN ? 'where' : 'which';
 
 const WHISPER_BASE_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin';
 const WHISPER_MODEL_FILE = 'ggml-base.en.bin';
+const WHISPER_EXPECTED_BYTES = 147964211; // ggml-base.en.bin from ggerganov/whisper.cpp
 
 function checkBinary(name) {
   return new Promise(resolve => {
@@ -35,30 +38,56 @@ function checkBinary(name) {
   });
 }
 
+function unlinkQuiet(p) {
+  try { fs.unlinkSync(p); } catch {}
+}
+
 /**
  * Best-effort download of the whisper base.en model. We use Node 18+'s
  * built-in fetch; no external deps.
+ *
+ * Node's fetch returns a Web ReadableStream for `res.body` — it has no
+ * `.pipe()`. Bridge with `Readable.fromWeb`, write to `.partial`, and
+ * rename only after a size check so a failed download never leaves a
+ * 0-byte stub that `existsSync` would treat as a real model.
  */
 async function downloadWhisperModel(targetDir, progressFn) {
   const target = path.join(targetDir, WHISPER_MODEL_FILE);
+  const partial = `${target}.partial`;
   fs.mkdirSync(targetDir, { recursive: true });
-  if (fs.existsSync(target) && fs.statSync(target).size > 1024 * 1024) {
+  if (cfg.isUsableWhisperModel(target)) {
     return { path: target, cached: true };
   }
-  const res = await fetch(WHISPER_BASE_URL);
+  // Drop any prior empty/corrupt stub so setup re-downloads.
+  unlinkQuiet(target);
+  unlinkQuiet(partial);
+
+  const res = await fetch(WHISPER_BASE_URL, { redirect: 'follow' });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${WHISPER_BASE_URL}`);
-  const total = parseInt(res.headers.get('content-length') || '0', 10);
-  let received = 0;
-  const file = fs.createWriteStream(target);
-  await new Promise((resolve, reject) => {
-    res.body.on('data', (chunk) => {
+  if (!res.body) throw new Error('Empty response body from whisper model download');
+
+  const total = Number(res.headers.get('content-length')) || WHISPER_EXPECTED_BYTES;
+  const nodeStream = Readable.fromWeb(res.body);
+  if (progressFn) {
+    let received = 0;
+    nodeStream.on('data', (chunk) => {
       received += chunk.length;
-      if (progressFn) progressFn(received, total);
+      progressFn(received, total);
     });
-    res.body.pipe(file);
-    file.on('finish', resolve);
-    file.on('error', reject);
-  });
+  }
+
+  try {
+    await pipeline(nodeStream, fs.createWriteStream(partial));
+  } catch (err) {
+    unlinkQuiet(partial);
+    throw err;
+  }
+
+  if (!cfg.isUsableWhisperModel(partial)) {
+    unlinkQuiet(partial);
+    throw new Error('Downloaded whisper model is empty or corrupt — try again');
+  }
+  fs.renameSync(partial, target);
   return { path: target, cached: false };
 }
 

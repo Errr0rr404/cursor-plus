@@ -28,12 +28,18 @@ const IS_WIN   = PLATFORM === 'win32';
 const IS_MAC   = PLATFORM === 'darwin';
 const IS_LINUX = PLATFORM === 'linux';
 
+// Tiny/base ggml models are tens of MB; reject empty / truncated downloads
+// and HuggingFace LFS pointer stubs that `existsSync` would otherwise accept.
+const WHISPER_MODEL_MIN_BYTES = 1024 * 1024;
+
 const WHISPER_MODEL_CANDIDATES = [
   path.join(MODELS_DIR, 'ggml-base.en.bin'),
   path.join(MODELS_DIR, 'ggml-small.en.bin'),
   path.join(MODELS_DIR, 'ggml-tiny.en.bin'),
   path.join(MODELS_DIR, 'ggml-base.bin'),
   path.join(__dirname, '..', 'models', 'ggml-base.en.bin'),
+  // Sibling copilot-plus install (same ggml-base.en.bin)
+  path.join(os.homedir(), '.copilot', 'models', 'ggml-base.en.bin'),
   // macOS Homebrew paths
   '/opt/homebrew/share/whisper.cpp/models/ggml-base.en.bin',
   '/usr/local/share/whisper.cpp/models/ggml-base.en.bin',
@@ -110,8 +116,9 @@ function load() {
     ? fileConfig.voice.audioDevice
     : detectMicrophone();
 
-  const modelPath = (fileConfig.voice && fileConfig.voice.modelPath && fs.existsSync(fileConfig.voice.modelPath))
-    ? fileConfig.voice.modelPath
+  const configuredModel = fileConfig.voice && fileConfig.voice.modelPath;
+  const modelPath = isUsableWhisperModel(configuredModel)
+    ? configuredModel
     : (findWhisperModel() || defaults.voice.modelPath);
 
   const merged = Object.assign({}, defaults, fileConfig);
@@ -144,8 +151,12 @@ function validate(cfg) {
   if (cfg.queue && cfg.queue.maxSize != null && (typeof cfg.queue.maxSize !== 'number' || cfg.queue.maxSize < 1)) {
     warns.push(`queue.maxSize must be a positive number`);
   }
-  if (cfg.voice && cfg.voice.modelPath && !fs.existsSync(cfg.voice.modelPath)) {
-    warns.push(`voice.modelPath does not exist: ${cfg.voice.modelPath}`);
+  if (cfg.voice && cfg.voice.modelPath) {
+    if (!fs.existsSync(cfg.voice.modelPath)) {
+      warns.push(`voice.modelPath does not exist: ${cfg.voice.modelPath}`);
+    } else if (!isUsableWhisperModel(cfg.voice.modelPath)) {
+      warns.push(`voice.modelPath is empty or corrupt (re-run cursor+ --setup): ${cfg.voice.modelPath}`);
+    }
   }
   if (cfg.mouse && cfg.mouse.reportMode && !['sgr', 'normal', 'off'].includes(cfg.mouse.reportMode)) {
     warns.push(`mouse.reportMode must be sgr|normal|off`);
@@ -172,8 +183,22 @@ function patch(updates) {
   save(raw);
 }
 
+/**
+ * True when `p` exists and is large enough to be a real ggml model file
+ * (not a 0-byte stub left by a failed download).
+ */
+function isUsableWhisperModel(p) {
+  if (!p) return false;
+  try {
+    const st = fs.statSync(p);
+    return st.isFile() && st.size >= WHISPER_MODEL_MIN_BYTES;
+  } catch {
+    return false;
+  }
+}
+
 function findWhisperModel() {
-  return WHISPER_MODEL_CANDIDATES.find(p => fs.existsSync(p)) || null;
+  return WHISPER_MODEL_CANDIDATES.find(p => isUsableWhisperModel(p)) || null;
 }
 
 function findPiperVoice() {
@@ -347,9 +372,10 @@ function listMicDevices() {
 module.exports = {
   load, save, patch, validate, ensureDirs,
   defaultConfig,
-  findWhisperModel, findPiperVoice,
+  findWhisperModel, findPiperVoice, isUsableWhisperModel,
   detectMicrophone, listMicDevices,
   CONFIG_DIR, CONFIG_PATH, MODELS_DIR, AGENTS_DIR, LOG_PATH,
   PLATFORM, IS_WIN, IS_MAC, IS_LINUX,
   WHISPER_MODEL_CANDIDATES, PIPER_VOICE_CANDIDATES,
+  WHISPER_MODEL_MIN_BYTES,
 };

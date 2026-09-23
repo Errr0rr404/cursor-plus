@@ -19,6 +19,7 @@ const { spawn, execFile } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const { isUsableWhisperModel } = require('./config');
 
 const PLATFORM = os.platform();
 const IS_WIN   = PLATFORM === 'win32';
@@ -204,8 +205,12 @@ class VoiceRecorder {
   _transcribe(audioFile) {
     const modelPath = this.config.modelPath;
     if (!modelPath) {
+      return Promise.reject(new Error('No whisper model found. Run: cursor+ --setup'));
+    }
+    // Empty/corrupt stubs from a failed download → clear setup hint (vs opaque whisper-cli error).
+    if (!isUsableWhisperModel(modelPath)) {
       return Promise.reject(new Error(
-        'No whisper model found. Run: cursor+ --setup'
+        `Whisper model is empty or corrupt (${modelPath}). Re-run: cursor+ --setup`
       ));
     }
     const lang = (this.config.language || 'en').trim();

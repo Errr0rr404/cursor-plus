@@ -2,6 +2,14 @@
 
 All notable changes to cursor-plus are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.6] — 2026-09-23
+
+### Fixed
+
+- **onboarding:** whisper model download now bridges Node's Web `ReadableStream` via `Readable.fromWeb` + `pipeline` (the old `.pipe()` path left a 0-byte stub and broke all voice transcription)
+- **config / voice:** reject empty or truncated model files (`< 1 MiB`) so `--setup` re-downloads and whisper-cli no longer fails with an opaque "failed to initialize whisper context"
+- **config:** also discover `~/.copilot/models/ggml-base.en.bin` as a fallback candidate
+
 ## [0.1.0] — 2026-09-23
 
 Initial scaffold. Implements the Phase 0 + Phase 1 + early Phase 2 milestone from [PLAN.md](./PLAN.md).
