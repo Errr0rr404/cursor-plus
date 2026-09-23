@@ -36,9 +36,21 @@ function _which(name) {
 }
 
 const CURSOR_MARKERS = [
-  /cursor/i,
-  /agent\s*cli/i,
   /@cursor\/agent/i,
+  /cursor[ -]?agent/i,
+  /\bcursor agent\b/i,
+  /cursor\.com\/docs\/cli/i,
+];
+
+/** Reject known non-Cursor agents (used mainly for generic `agent` fallback). */
+const REJECT_MARKERS = [
+  /\bgrok\s+build\b/i,
+  /\bxai\b/i,
+  /\bgithub\s+copilot\b/i,
+  /\bcopilot\s+cli\b/i,
+  /\bclaude\s+code\b/i,
+  /\bcodex\s+cli\b/i,
+  /openai\s+codex/i,
 ];
 
 async function _identify(binPath) {
@@ -59,11 +71,15 @@ async function _identify(binPath) {
           resolve(`${stdout || ''}\n${stderr || ''}`);
         });
       });
+      if (REJECT_MARKERS.some(re => re.test(out))) continue;
       if (CURSOR_MARKERS.some(re => re.test(out))) return true;
     } catch (err) {
       // Some CLIs exit non-zero on --help — still got output, check it.
       const out = (err && (err.stdout || err.stderr)) || '';
-      if (typeof out === 'string' && CURSOR_MARKERS.some(re => re.test(out))) return true;
+      if (typeof out === 'string') {
+        if (REJECT_MARKERS.some(re => re.test(out))) continue;
+        if (CURSOR_MARKERS.some(re => re.test(out))) return true;
+      }
     }
   }
   return false;
@@ -76,19 +92,33 @@ async function _identify(binPath) {
 async function resolveCursorAgent() {
   const envOverride = process.env.CURSOR_AGENT_BIN;
   if (envOverride) {
-    const ok = await _identify(envOverride);
-    if (ok) return { bin: envOverride, source: 'env' };
+    const rejected = await _isRejected(envOverride);
+    if (rejected) {
+      const error = new Error(
+        `$CURSOR_AGENT_BIN points to a non-Cursor agent (${envOverride}).`
+      );
+      error.code = 'CURSOR_AGENT_REJECTED';
+      throw error;
+    }
+    // Trust an explicit override once foreign-agent markers are ruled out.
+    return { bin: envOverride, source: 'env' };
   }
   const direct = _which('cursor-agent');
   if (direct) {
-    const ok = await _identify(direct);
-    if (ok) return { bin: direct, source: 'cursor-agent' };
+    const rejected = await _isRejected(direct);
+    if (!rejected) {
+      // Binary named cursor-agent is authoritative; --version is often just a hash.
+      return { bin: direct, source: 'cursor-agent' };
+    }
   }
-  // Last-ditch: an `agent` binary that identifies as Cursor's.
+  // Last-ditch: an `agent` binary that identifies as Cursor's (and isn't rejected).
   const generic = _which('agent');
   if (generic) {
-    const ok = await _identify(generic);
-    if (ok) return { bin: generic, source: 'agent-as-cursor' };
+    const rejected = await _isRejected(generic);
+    if (!rejected) {
+      const ok = await _identify(generic);
+      if (ok) return { bin: generic, source: 'agent-as-cursor' };
+    }
   }
   const error = new Error(
     'Could not locate the Cursor Agent CLI.\n' +
@@ -97,6 +127,20 @@ async function resolveCursorAgent() {
   );
   error.code = 'CURSOR_AGENT_NOT_FOUND';
   throw error;
+}
+
+async function _isRejected(binPath) {
+  if (!binPath) return false;
+  try {
+    const out = await new Promise((resolve) => {
+      execFile(binPath, ['--help'], { encoding: 'utf8', timeout: 3000 }, (err, stdout, stderr) => {
+        resolve(`${stdout || ''}\n${stderr || ''}\n${(err && (err.stdout || err.stderr)) || ''}`);
+      });
+    });
+    return REJECT_MARKERS.some(re => re.test(out));
+  } catch {
+    return false;
+  }
 }
 
 /** Synchronous best-effort: returns `bin` without identity check. */

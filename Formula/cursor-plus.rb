@@ -1,8 +1,8 @@
 class CursorPlus < Formula
   desc "Voice + click-to-caret + TTS + screenshots — drop-in wrapper for the Cursor Agent CLI"
-  homepage "https://github.com/<OWNER>/cursor-plus"
+  homepage "https://github.com/Errr0rr404/cursor-plus"
   url "https://registry.npmjs.org/cursor-plus/-/cursor-plus-#{version}.tgz"
-  sha256 "<SHA256>"
+  sha256 "fc253ef7a2fc11d4d6b4d48d8af73c6b8151ed20a458f015ad8fe0124339548d"
   license "MIT"
 
   depends_on "node" => :build

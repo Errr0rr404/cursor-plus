@@ -137,16 +137,15 @@ const CTRL_CODES = {
 };
 
 // Map our named hotkeys to byte sequences.
+// IMPORTANT: never map voice → Ctrl+R. Cursor CLI uses Ctrl+R for review.
 const HOTKEYS = {
-  voice:     CTRL_CODES.CTRL_R,   // cursor-plus never steals Ctrl+R for voice (Cursor CLI uses it for review) — but we expose it for legacy fallback. See HOTKEY_PLAN below.
-  voiceToggle: '\x00',            // Ctrl+Space — see _isCtrlSpace below
+  voiceToggle: '\x00',            // Ctrl+Space (xterm NUL) — see isCtrlSpace()
   tts:       CTRL_CODES.CTRL_T,
   screenshot:CTRL_CODES.CTRL_P,
   clipboard: CTRL_CODES.CTRL_Y,
   editor:    CTRL_CODES.CTRL_G,   // Cursor's $EDITOR escape hatch — passthrough
   stash:     CTRL_CODES.CTRL_S,
   file:      CTRL_CODES.CTRL_O,
-  queue:    '\x15',              // Ctrl+U — clear line; we reuse this in the wrapper to flush queue
   cheatsheet:'?',
   esc:      CTRL_CODES.ESC,
 };
@@ -175,37 +174,47 @@ function isCtrlSpace(key) {
  * bit (1) — see https://sw.kovidgoyal.net/kitty/keyboard-protocol/.
  * We match both press (with all subforms) and release.
  */
-const KITTY_CSI_U = /^\x1b\[(\d+)(?::[^]*)?(?:;(\d+)(?::[^]*)?)?u$/;
+// CSI unicode ; modifiers[:event-type] u  — optional alternate-key colons after codepoint.
+const KITTY_CSI_U = /^\x1b\[(\d+)(?::[^;]*)?(?:;([^u]*))?u$/;
 
 /**
  * Try to parse a Kitty CSI-u encoded key event. Returns:
- *   { kind: 'press' | 'release' | 'repeat', key, modifiers, text? }
+ *   { kind: 'press' | 'release' | 'repeat', codepoint, modifiers, text? }
  * or null if `key` doesn't look like CSI-u.
+ *
+ * Kitty progressive enhancement encodes:
+ *   CSI unicode-key-code ; modifiers:event-type u
+ * where modifiers is `1 + bitmask` (default 1 = none), and event-type is
+ * a sub-field: 1=press (default), 2=repeat, 3=release.
+ * See https://sw.kovidgoyal.net/kitty/keyboard-protocol/
  */
 function parseKittyCsiU(key) {
   const m = KITTY_CSI_U.exec(key);
   if (!m) return null;
   const codepoint = parseInt(m[1], 10);
-  const modsRaw = m[2] != null ? parseInt(m[2], 10) : 1;
-  const modifiers = modsRaw - 1;
-  // Per Kitty spec, base modifier is 1 (no modifiers).
-  // Press events have no extra flag; release adds 1 (bit 0 = was release).
-  // Repeat adds 2 (bit 1 = was repeat).
+  const modsField = m[2] != null ? m[2] : '1';
+  const [modsRawStr, eventRawStr] = modsField.split(':');
+  const modsRaw = parseInt(modsRawStr || '1', 10);
+  const modifiers = Math.max(0, modsRaw - 1);
+  const eventType = eventRawStr != null ? parseInt(eventRawStr, 10) : 1;
   let kind = 'press';
-  if (modifiers & 1) kind = 'release';
-  else if (modifiers & 2) kind = 'repeat';
+  if (eventType === 3) kind = 'release';
+  else if (eventType === 2) kind = 'repeat';
   return { kind, codepoint, modifiers, text: null };
 }
 
 /**
  * Returns true if `key` represents a Space *press* event, regardless of
- * how the terminal encoded it. Used for the hold-to-talk fallback where
- * we don't trust the Kitty protocol to give us key-up events.
+ * how the terminal encoded it. Used for the hold-to-talk path.
+ * Plain ASCII space counts as press; Kitty release events do not.
  */
 function isSpacePress(key) {
   if (key === ' ') return true;
   const parsed = parseKittyCsiU(key);
-  if (parsed && parsed.kind === 'press' && parsed.codepoint === 32) return true;
+  // Only unmodified Space — Ctrl+Space is handled separately via isCtrlSpace.
+  if (parsed && parsed.kind === 'press' && parsed.codepoint === 32 && parsed.modifiers === 0) {
+    return true;
+  }
   return false;
 }
 

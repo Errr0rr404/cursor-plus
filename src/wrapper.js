@@ -96,13 +96,20 @@ class CursorPlusWrapper {
     this._lastOutputAt = 0;
     this._onStdin = null;
     this._ttsQueue = Promise.resolve();
+    this._waitingNotified = false;
 
     // Hold-Space state
     this._spacePressed = false;
     this._holdSpaceSupported = false;
+    this._holdSpaceTimer = null;
+    this._holdSpaceArmed = false; // true once hold threshold elapsed & recording started
 
-    // Mouse mode buffer (we accumulate until the SGR terminator M/m)
-    this._mouseBuf = '';
+    // Input CSI assembly (Kitty CSI-u + SGR mouse can arrive split across reads)
+    this._csiBuf = '';
+
+    // Notifications cooldown (session_idle / waiting_input / …)
+    const notifyCfg = cfg.notifications || {};
+    this._notifyCooldown = notifyRules.createCooldown(notifyCfg.cooldownMs || 90_000);
   }
 
   async start() {
@@ -140,17 +147,14 @@ class CursorPlusWrapper {
       keys.enableMouse(process.stdout, this.cfg.mouse.reportMode || 'sgr');
     }
 
-    // Enable Kitty keyboard protocol if requested. We probe first to know
-    // whether the user's terminal speaks it; the result feeds the
-    // hold-Space state machine.
+    // Enable Kitty keyboard protocol only when the terminal actually speaks it.
+    // Enabling blindly leaves non-Kitty terminals in a broken input mode.
     const wantKitty = (this.cfg.keys && this.cfg.keys.kitty !== 'off');
     if (wantKitty) {
-      keys.enableKitty(process.stdout);
       const ok = await keys.detectKitty(process.stdin, process.stdout).catch(() => false);
       this._holdSpaceSupported = ok;
       if (ok) {
-        // We're now reading PTY-reply bytes mixed with user input — strip them.
-        // The probe already added a 'data' listener; replace it cleanly.
+        keys.enableKitty(process.stdout);
         try { process.stdin.removeAllListeners('data'); } catch {}
         if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
           process.stdin.setRawMode(true);
@@ -197,8 +201,7 @@ class CursorPlusWrapper {
     const s = typeof data === 'string' ? data : data.toString();
     if (!this.cheatsheet.isOpen) process.stdout.write(s);
 
-    // Mouse mode: feed any pending data into the SGR parser.
-    this._feedMouseStream(s);
+    // Mouse events arrive on stdin (not PTY output) — do not parse here.
 
     const plain = stripAnsi(s);
     this._responseBuf = (this._responseBuf + plain).slice(-RESPONSE_BUF_MAX);
@@ -221,11 +224,11 @@ class CursorPlusWrapper {
         this._awaitingResponse = false;
         this._waitingNotified = false;
         const rule = notifyRules.matchRule((this.cfg.notifications || {}).rules, 'session_idle');
-        if (rule && this._notifyCooldown('session_idle') && !this.cfg.notifications.quiet) {
+        if (rule && this._notifyCooldown('session_idle') && !(this.cfg.notifications || {}).quiet) {
           notifyRules.fire(rule, {
             title: 'cursor+ idle',
             body: 'Response ready',
-            webhookUrl: this.cfg.notifications.webhookUrl,
+            webhookUrl: (this.cfg.notifications || {}).webhookUrl,
           });
         }
         this._flushQueueNext();
@@ -233,31 +236,13 @@ class CursorPlusWrapper {
     }, SETTLE_MS);
   }
 
-  // ── Mouse stream ─────────────────────────────────────────────────────────
-
-  _feedMouseStream(s) {
-    if (!s) return;
-    const mouseMode = this.cfg.mouse && this.cfg.mouse.reportMode;
-    if (mouseMode === 'off' || this.cfg.mouse.enabled === false) return;
-    for (let i = 0; i < s.length; i++) {
-      const c = s[i];
-      this._mouseBuf += c;
-      if (this._mouseBuf.endsWith('M') || this._mouseBuf.endsWith('m')) {
-        const parsed = this.mouse.parseSgrMouseEvent(this._mouseBuf);
-        if (parsed && parsed.kind === 'left-press') {
-          this._handleClick(parsed.col, parsed.row);
-        }
-        this._mouseBuf = '';
-      }
-      // Guard against runaway buffers if the terminal sends something weird.
-      if (this._mouseBuf.length > 32) this._mouseBuf = '';
-    }
-  }
+  // ── Mouse / click ────────────────────────────────────────────────────────
 
   _handleClick(col, row) {
+    const from = this.mouse.caret;
     const delta = this.mouse.handleClick(row, col);
     if (delta === 0) return;
-    const arrows = this.mouse.buildArrowKeys(this.mouse.caret - delta, this.mouse.caret);
+    const arrows = this.mouse.buildArrowKeys(from, this.mouse.caret);
     if (arrows) this._shell.write(arrows);
   }
 
@@ -268,11 +253,75 @@ class CursorPlusWrapper {
   // ── Input handling ───────────────────────────────────────────────────────
 
   _handleInput(data) {
-    const key = data.toString();
+    const chunk = data.toString();
+    // Assemble split CSI sequences (Kitty CSI-u, SGR mouse) across reads.
+    for (const key of this._assembleKeys(chunk)) {
+      this._dispatchKey(key);
+    }
+  }
 
+  /**
+   * Yield complete key events from a raw stdin chunk. Incomplete CSI
+   * sequences are buffered in `this._csiBuf` until a terminator arrives.
+   */
+  _assembleKeys(chunk) {
+    const out = [];
+    let i = 0;
+    while (i < chunk.length) {
+      if (this._csiBuf) {
+        this._csiBuf += chunk[i];
+        i++;
+        if (this._csiComplete(this._csiBuf)) {
+          out.push(this._csiBuf);
+          this._csiBuf = '';
+        } else if (this._csiBuf.length > 64) {
+          // Garbage — flush as literal so we don't wedge the input path.
+          out.push(this._csiBuf);
+          this._csiBuf = '';
+        }
+        continue;
+      }
+      if (chunk[i] === '\x1b') {
+        this._csiBuf = '\x1b';
+        i++;
+        continue;
+      }
+      out.push(chunk[i]);
+      i++;
+    }
+    return out;
+  }
+
+  _csiComplete(buf) {
+    if (buf.length < 2) return false;
+    // SGR mouse: ESC [ < … M|m
+    if (/^\x1b\[</.test(buf)) return /[Mm]$/.test(buf);
+    // CSI / SS3 terminated by a final byte in @-~ (includes Kitty `u`)
+    if (buf[1] === '[' || buf[1] === 'O') {
+      return buf.length >= 3 && /[\x40-\x7e]$/.test(buf);
+    }
+    // ESC + single char (Alt-key) — treat as complete after 2 bytes
+    return buf.length >= 2;
+  }
+
+  _dispatchKey(key) {
     // Cheatsheet overlay swallows all keys until closed.
     if (this.cheatsheet.isOpen) {
       this.cheatsheet.handleInput(key);
+      return;
+    }
+
+    // SGR mouse events (stdin) — never forward into the agent.
+    const mouseEv = this.mouse.parseSgrMouseEvent(key);
+    if (mouseEv) {
+      if (
+        mouseEv.kind === 'left-press' &&
+        this.cfg.mouse &&
+        this.cfg.mouse.enabled !== false &&
+        this.cfg.mouse.clickToCaret !== false
+      ) {
+        this._handleClick(mouseEv.col, mouseEv.row);
+      }
       return;
     }
 
@@ -283,17 +332,33 @@ class CursorPlusWrapper {
     }
 
     // ── Hold-Space state machine (Kitty protocol) ──────────────────────
-    if (keys.isSpacePress(key)) {
-      if (this._holdSpaceSupported && this.cfg.voice && this.cfg.voice.holdSpace !== false) {
+    // Short taps (< HOLD_MS) inject a normal space so typing still works.
+    // Holding past the threshold starts recording; release stops + transcribes.
+    const HOLD_MS = 180;
+    if (this._holdSpaceSupported && this.cfg.voice && this.cfg.voice.holdSpace !== false) {
+      if (keys.isSpacePress(key) && !keys.isCtrlSpace(key)) {
+        if (this._spacePressed) return; // ignore repeat while held
         this._spacePressed = true;
-        this._startVoice();
+        this._holdSpaceArmed = false;
+        clearTimeout(this._holdSpaceTimer);
+        this._holdSpaceTimer = setTimeout(() => {
+          this._holdSpaceArmed = true;
+          this._startVoice();
+        }, HOLD_MS);
         return;
       }
-    }
-    if (keys.isSpaceRelease(key)) {
-      if (this._spacePressed) {
+      if (keys.isSpaceRelease(key)) {
+        clearTimeout(this._holdSpaceTimer);
+        this._holdSpaceTimer = null;
+        if (!this._spacePressed) return;
         this._spacePressed = false;
-        this._stopVoice();
+        if (this._holdSpaceArmed || this.voice.isRecording) {
+          this._holdSpaceArmed = false;
+          this._stopVoice();
+        } else {
+          // Tap — type a space instead of recording.
+          this._forwardText(' ');
+        }
         return;
       }
     }
@@ -304,7 +369,11 @@ class CursorPlusWrapper {
     if (key === CTRL_Y) { this._pasteClipboard(); return; }
     if (key === CTRL_S) { this._stashPrompt(); return; }
     if (key === CTRL_B) { this._bookmarkLast(); return; }
+    // Ctrl+R / Ctrl+G intentionally NOT intercepted — Cursor owns them.
     if (key === CTRL_C && this.voice.isRecording) {
+      clearTimeout(this._holdSpaceTimer);
+      this._spacePressed = false;
+      this._holdSpaceArmed = false;
       this.voice.cancel();
       this._notify('🚫 Recording cancelled', '');
       return;
@@ -316,21 +385,21 @@ class CursorPlusWrapper {
       return;
     }
 
-    // ── Track raw input for buffer math + Enter handling ────────────────
-    this._trackInputLine(key);
-
-    // Mirror the same key into the mouse-caret shadow buffer so a
-    // subsequent click can reposition the caret against an up-to-date draft.
-    if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
-      this.mouse.trackInput(key);
-    }
-
     if (key === '\r' || key === '\n') {
+      this._trackInputLine(key);
       this._handleEnter();
       return;
     }
 
-    // Pass through to the cursor-agent PTY.
+    this._forwardText(key);
+  }
+
+  /** Track + write a normal key / injected chunk into the child PTY. */
+  _forwardText(key) {
+    this._trackInputLine(key);
+    if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
+      this.mouse.trackInput(key);
+    }
     this._shell.write(key);
   }
 
@@ -386,6 +455,9 @@ class CursorPlusWrapper {
     this._awaitingResponse = true;
     this._awaitingSince = Date.now();
     this._busy = true;
+    if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
+      this.mouse.setBuffer('');
+    }
     setImmediate(() => { this._busy = false; });   // best-effort busy hint
     this._shell.write('\r');
   }
@@ -405,8 +477,12 @@ class CursorPlusWrapper {
     const safe = sanitizeInjectedText(text);
     if (!safe) return;
     this._shell.write(safe);
-    this._inputBuf = safe.replace(/\r$/, '');
+    this._inputBuf = (this._inputBuf || '') + safe.replace(/\r$/, '');
     this._inputCursor = this._inputBuf.length;
+    if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
+      // Prefer setBuffer so we don't re-parse injected chunks as keystrokes.
+      this.mouse.setBuffer(this._inputBuf);
+    }
   }
 
   // ── Voice ────────────────────────────────────────────────────────────────
@@ -535,6 +611,9 @@ class CursorPlusWrapper {
     this._shell.write('\x15');   // clear line on screen
     this._inputBuf = '';
     this._inputCursor = 0;
+    if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
+      this.mouse.setBuffer('');
+    }
   }
 
   // ── Cheatsheet ───────────────────────────────────────────────────────────

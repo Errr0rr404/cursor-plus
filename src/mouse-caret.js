@@ -88,14 +88,24 @@ class MouseCaret {
         if (this.caret < this.buffer.length) this.caret += 1;
         return;
       case '\x1b[H': // Home
+      case '\x1b[1~':
         this.caret = 0;
         return;
       case '\x1b[F': // End
+      case '\x1b[4~':
         this.caret = this.buffer.length;
+        return;
+      case '\r':
+      case '\n':
+        // Submit — leave buffer as-is; wrapper clears on enter handling.
         return;
       case '\x1b':  // bare ESC — don't change anything
         return;
     }
+    // Other CSI / mouse / Kitty sequences are not draft text.
+    if (key.charCodeAt(0) === 0x1b) return;
+    // Control bytes (except those handled above) are not draft text.
+    if (key.length === 1 && key.charCodeAt(0) < 0x20) return;
     // Otherwise: printable ASCII / multi-byte chars (after sanitizeInjectedText).
     if (key.length >= 1) {
       this.buffer = this.buffer.slice(0, this.caret) + key + this.buffer.slice(this.caret);

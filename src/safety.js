@@ -23,7 +23,10 @@ const PATTERNS = [
   { kind: 'openai-key',       re: /sk-[A-Za-z0-9]{32,}/g },
   { kind: 'anthropic-key',    re: /sk-ant-[A-Za-z0-9-]{32,}/g },
   { kind: 'slack-token',      re: /xox[abpr]-[A-Za-z0-9-]{10,}/g },
-  { kind: 'private-key',      re: /-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----[\s\S]*?-----END/ },
+  // Must be /g — non-global exec() in a while-loop never advances and OOMs.
+  // END block is optional so a lone BEGIN header still flags; when END is
+  // present the full PEM is captured for redact().
+  { kind: 'private-key',      re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----(?:[\s\S]*?-----END (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----)?/g },
   { kind: 'jwt',              re: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
   { kind: 'generic-bearer',   re: /Bearer\s+[A-Za-z0-9._\-+/=]{20,}/g },
   { kind: 'stripe-key',       re: /sk_live_[A-Za-z0-9]{24,}/g },

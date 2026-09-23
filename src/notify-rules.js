@@ -43,23 +43,38 @@ function fire(rule, ctx) {
 }
 
 function _osNotify(title, body) {
+  const safeTitle = String(title || 'cursor+').slice(0, 80);
+  const safeBody = String(body || '').slice(0, 200);
   if (IS_MAC) {
-    spawn('osascript', ['-e', `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`], { stdio: 'ignore' });
+    // Pass payload via env + argv-only osascript so body/title cannot break out
+    // of an interpolated AppleScript string.
+    const script =
+      'on run argv\n' +
+      '  display notification (item 2 of argv) with title (item 1 of argv)\n' +
+      'end run';
+    spawn('osascript', ['-e', script, safeTitle, safeBody], { stdio: 'ignore' });
     return;
   }
   if (IS_LINUX) {
-    spawn('notify-send', [title, body], { stdio: 'ignore' });
+    spawn('notify-send', ['--', safeTitle, safeBody], { stdio: 'ignore' });
     return;
   }
   if (IS_WIN) {
-    const psCmd = `[reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null; ` +
-      `[reflection.assembly]::loadwithpartialname('System.Drawing') | Out-Null; ` +
-      `$n = new-object system.windows.forms.notifyicon; ` +
-      `$n.icon = [System.Drawing.SystemIcons]::Information; ` +
-      `$n.visible = $true; ` +
-      `$n.showballoontip(10, '${title.replace(/'/g, "''")}', '${body.replace(/'/g, "''")}', [system.windows.forms.tooltipicon]::None); ` +
-      `Start-Sleep -s 3; $n.dispose()`;
-    spawn('powershell.exe', ['-NoProfile', '-Command', psCmd], { stdio: 'ignore' });
+    // Feed title/body on stdin as JSON so PowerShell never sees them in -Command.
+    const psCmd =
+      "$j = [Console]::In.ReadToEnd() | ConvertFrom-Json; " +
+      "[reflection.assembly]::loadwithpartialname('System.Windows.Forms') | Out-Null; " +
+      "[reflection.assembly]::loadwithpartialname('System.Drawing') | Out-Null; " +
+      "$n = new-object system.windows.forms.notifyicon; " +
+      "$n.icon = [System.Drawing.SystemIcons]::Information; " +
+      "$n.visible = $true; " +
+      "$n.showballoontip(10, $j.title, $j.body, [system.windows.forms.tooltipicon]::None); " +
+      "Start-Sleep -s 3; $n.dispose()";
+    const proc = spawn('powershell.exe', ['-NoProfile', '-Command', psCmd], { stdio: ['pipe', 'ignore', 'ignore'] });
+    try {
+      proc.stdin.write(JSON.stringify({ title: safeTitle, body: safeBody }));
+      proc.stdin.end();
+    } catch {}
   }
 }
 

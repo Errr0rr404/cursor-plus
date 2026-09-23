@@ -7,65 +7,70 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. v0.1.0)'
+        description: 'Version tag to publish (e.g. v0.1.0)'
         required: true
 
 jobs:
   publish-npm:
+    name: Publish to npm
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+
       - name: Install dependencies (skip lifecycle hooks for speed)
         run: npm ci --ignore-scripts
+
       - name: Run tests
         run: npm test
+
       - name: Publish to npm
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   update-formula:
-    needs: publish-npm
-    continue-on-error: true
+    name: Update Homebrew formula SHA
     runs-on: ubuntu-latest
+    needs: publish-npm
+    # continue-on-error so a missing HOMEBREW_TAP_TOKEN doesn't fail the release.
+    # The npm publish is the authoritative step.
+    continue-on-error: true
     steps:
-      - name: Checkout tap
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.HOMEBREW_TAP_REPO }}
+          repository: Errr0rr404/homebrew-cursor-plus
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: tap
-      - name: Compute new sha256 + version
-        id: meta
+          path: homebrew-cursor-plus
+
+      - name: Compute npm tarball sha256
+        id: sha
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          VERSION="${GITHUB_REF_NAME#v}"
           URL="https://registry.npmjs.org/cursor-plus/-/cursor-plus-${VERSION}.tgz"
-          SHA=$(curl -sL "${URL}" | sha256sum | awk '{print $1}')
-          echo "SHA=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "URL=${URL}" >> "$GITHUB_OUTPUT"
-      - name: Patch Formula
-        working-directory: tap
+          # Brief pause for npm CDN to propagate the just-published tarball.
+          sleep 15
+          SHA=$(curl -sL "$URL" | sha256sum | awk '{print $1}')
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Patch formula
         run: |
-          cd Formula
-          if [ ! -f cursor-plus.rb ]; then
-            echo "cursor-plus.rb missing in tap — skipping."
-            exit 0
-          fi
-          sed -i.bak \
-            -e "s|cursor-plus-[0-9][0-9a-z.-]*\.tgz|cursor-plus-${{ steps.meta.outputs.VERSION }}.tgz|g" \
-            -e "s|sha256 \"[0-9a-f]\{64\}\"|sha256 \"${{ steps.meta.outputs.SHA }}\"|g" \
-            cursor-plus.rb
-          rm -f cursor-plus.rb.bak
-      - name: Commit + push formula
-        working-directory: tap
+          cd homebrew-cursor-plus
+          sed -i "s|url \".*\"|url \"${{ steps.sha.outputs.url }}\"|" Formula/cursor-plus.rb
+          sed -i "s|sha256 \".*\"|sha256 \"${{ steps.sha.outputs.sha }}\"|" Formula/cursor-plus.rb
+
+      - name: Commit updated formula
         run: |
+          cd homebrew-cursor-plus
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Formula/cursor-plus.rb
-          git diff --staged --quiet || git commit -m "cursor-plus: ${{ steps.meta.outputs.VERSION }}"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update cursor-plus to v${{ steps.sha.outputs.version }}"
           git push

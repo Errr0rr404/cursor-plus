@@ -65,20 +65,25 @@ class TTS {
   _speakOs(text) {
     return new Promise((resolve) => {
       if (IS_MAC) {
-        const proc = spawn('say', ['-r', String(this._rateWpm() || 200), text], { stdio: 'ignore' });
+        // argv form — no shell interpolation
+        const proc = spawn('say', ['-r', String(this._rateWpm() || 200), String(text)], { stdio: 'ignore' });
         this._proc = proc;
         proc.on('exit', () => { this._proc = null; resolve(); });
         proc.on('error', () => { this._proc = null; resolve(); });
         return;
       }
       if (IS_WIN) {
-        const psCmd = `Add-Type -AssemblyName System.Speech; ` +
-          `$sp = New-Object System.Speech.Synthesis.SpeechSynthesizer; ` +
+        // Feed speech text on stdin — never interpolate into -Command.
+        const psCmd =
+          "Add-Type -AssemblyName System.Speech; " +
+          "$sp = New-Object System.Speech.Synthesis.SpeechSynthesizer; " +
           `$sp.Rate = ${this._rateOffset()}; ` +
-          `$sp.Speak('${text.replace(/'/g, "''")}'); ` +
-          `$sp.Dispose()`;
-        const proc = spawn('powershell.exe', ['-NoProfile', '-Command', psCmd], { stdio: 'ignore' });
+          "$t = [Console]::In.ReadToEnd(); $sp.Speak($t); $sp.Dispose()";
+        const proc = spawn('powershell.exe', ['-NoProfile', '-Command', psCmd], {
+          stdio: ['pipe', 'ignore', 'ignore'],
+        });
         this._proc = proc;
+        try { proc.stdin.write(String(text)); proc.stdin.end(); } catch {}
         proc.on('exit', () => { this._proc = null; resolve(); });
         proc.on('error', () => { this._proc = null; resolve(); });
         return;

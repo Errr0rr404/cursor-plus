@@ -39,6 +39,19 @@ Status of cursor-plus against the phases laid out in [PLAN.md](./PLAN.md).
 
 **Exit criteria met:** Can dictate → agent → hear summary; paste/screenshot images into prompt on all three OSes. ✓
 
+### Pre-ship review (2026-09-23)
+
+Critical path fixes before considering v0.1.0 good to go:
+
+- [x] safety private-key `/g` (test OOM)
+- [x] Kitty CSI-u event-type parse (hold-Space release)
+- [x] Mouse on stdin + CSI reassembly
+- [x] Notify cooldown wiring
+- [x] Notification / TTS command-injection hardening
+- [x] Binary resolve vs foreign `agent` CLIs
+- [x] Hold-Space tap vs hold threshold
+- [x] 121 unit tests green under 512MB heap cap
+
 ## 🚧 Phase 3 — Power pack (planned)
 
 - [ ] History + search (`--history [query]`)
