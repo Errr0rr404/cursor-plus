@@ -26,6 +26,11 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      # The runner ships with npm 10.x which doesn't always handle
+      # granular-token publish correctly. Upgrade to a current npm.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
       - name: Install dependencies (skip lifecycle hooks for speed)
         run: npm ci --ignore-scripts
 
