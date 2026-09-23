@@ -1,9 +1,9 @@
 class CursorPlus < Formula
   desc "Voice + click-to-caret + TTS + screenshots — drop-in wrapper for the Cursor Agent CLI"
   homepage "https://github.com/Errr0rr404/cursor-plus"
-  url "https://registry.npmjs.org/cursor-plus/-/cursor-plus-0.1.5.tgz"
-  version "0.1.5"
-  sha256 "bed924b56034d700ac21631aa1f7a60f9fb453aef9082d2288b797df6f6b1111"
+  url "https://registry.npmjs.org/cursor-plus/-/cursor-plus-0.1.6.tgz"
+  version "0.1.6"
+  sha256 "b3241c5b5f2d99030b5fab4c6029e851471ec295bb8986eedf34cddde2f09bdc"
   license "MIT"
 
   depends_on "node" => :build
@@ -14,7 +14,7 @@ class CursorPlus < Formula
     # Install from the npm registry (not from the local tarball) so the
     # bin shim resolves to a real node_modules/cursor-plus directory
     # rather than a symlink into a brew-temp scratch dir.
-    system "npm", "install", "--prefix", libexec, "cursor-plus@0.1.5"
+    system "npm", "install", "--prefix", libexec, "cursor-plus@0.1.6"
 
     # npm --prefix installs the package into libexec/node_modules/<pkg> and
     # creates bin shims in libexec/node_modules/.bin. Symlink them into
