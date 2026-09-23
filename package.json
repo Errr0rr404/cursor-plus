@@ -1,0 +1,39 @@
+{
+  "name": "cursor-plus",
+  "version": "0.1.0",
+  "description": "Voice + click-to-caret + TTS + screenshots — drop-in wrapper for the Cursor Agent CLI",
+  "bin": {
+    "cursor+": "bin/cursor+"
+  },
+  "scripts": {
+    "setup": "node bin/cursor+ --setup",
+    "test": "node tests/run.js",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "scripts/"
+  ],
+  "keywords": [
+    "cursor",
+    "cursor-agent",
+    "cli",
+    "voice",
+    "speech",
+    "whisper",
+    "tts",
+    "piper",
+    "screenshot",
+    "dictation",
+    "mouse-caret",
+    "kitty-protocol"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  }
+}

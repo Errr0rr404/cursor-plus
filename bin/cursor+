@@ -1,0 +1,203 @@
+#!/usr/bin/env node
+'use strict';
+
+const os = require('os');
+
+const cfg   = require('../src/config');
+const theme = require('../src/theme');
+const logger = require('../src/logger');
+const CursorPlusWrapper = require('../src/wrapper');
+const { runOnboarding } = require('../src/onboarding');
+const { runDoctor } = require('../src/doctor');
+const { resolveCursorAgent } = require('../src/resolve-binary');
+const history = require('../src/history');
+const bookmarks = require('../src/bookmarks');
+
+const IS_WIN = os.platform() === 'win32';
+const VERSION = require('../package.json').version;
+
+// Disable Win32 Input Mode (sends keys as CSI sequences and breaks raw input)
+if (IS_WIN && process.stdout.isTTY) process.stdout.write('\x1b[?9001l');
+
+const ARGV = process.argv.slice(2);
+const has  = flag => ARGV.includes(flag);
+
+// ── Flag dispatch ────────────────────────────────────────────────────────────
+
+if (has('--version') || has('-V')) {
+  console.log(`cursor-plus v${VERSION}`);
+  process.exit(0);
+}
+
+if (has('--help-plus') || has('-h')) {
+  printHelp();
+  process.exit(0);
+}
+
+if (has('--setup')) {
+  runOnboarding().catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+  return;
+}
+
+if (has('--doctor')) {
+  runDoctor().catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+  return;
+}
+
+if (has('--preferences')) {
+  runOnboarding().catch(err => {
+    console.error('Error:', err.message);
+    process.exit(1);
+  });
+  return;
+}
+
+if (has('--print-bin')) {
+  resolveCursorAgent().then(r => {
+    console.log(r.bin);
+    process.exit(0);
+  }).catch(err => {
+    console.error(err.message);
+    process.exit(2);
+  });
+  return;
+}
+
+if (has('--history')) {
+  runHistory();
+  return;
+}
+
+if (has('--snippets') || has('--bookmarks')) {
+  runSnippets();
+  return;
+}
+
+// ── Normal mode ──────────────────────────────────────────────────────────────
+
+(async () => {
+  cfg.ensureDirs();
+  let config = cfg.load();
+  theme.set(config.theme || 'auto');
+  const warns = cfg.validate(config);
+  for (const w of warns) console.warn(`\x1b[33m[cursor+] config warning:\x1b[0m ${w}`);
+
+  if (!config.firstRunComplete && process.stdin.isTTY) {
+    // runOnboarding calls process.exit() — it never returns. The wrapper
+    // is reached only when the user re-launches after setup completes.
+    runOnboarding().catch(err => {
+      console.error('Setup failed:', err.message);
+      process.exit(1);
+    });
+    return;
+  }
+
+  const wrapper = new CursorPlusWrapper(ARGV, config);
+  wrapper.start();
+})().catch(err => {
+  logger.error('startup failed:', err);
+  console.error('Error:', err.message);
+  process.exit(1);
+});
+
+// ── History browser ─────────────────────────────────────────────────────────
+
+function runHistory() {
+  const t = theme.get(cfg.load());
+  const idx = ARGV.indexOf('--history');
+  const rest = ARGV.slice(idx + 1).filter(a => !a.startsWith('-'));
+  const clear = ARGV.includes('--clear');
+  if (clear) {
+    history.clear();
+    console.log('history cleared.');
+    process.exit(0);
+  }
+  const query = rest.join(' ').trim();
+  const results = query ? history.search(query, { limit: 50 }) : history.readRecent(50);
+  if (!results.length) {
+    console.log(query
+      ? `No matches for "${query}".`
+      : 'No history yet — start a session and submit a prompt to begin logging.');
+    process.exit(0);
+  }
+  console.log(`\n${t.bold}${results.length} entr${results.length === 1 ? 'y' : 'ies'}${query ? ` for "${query}"` : ''}${t.reset}\n`);
+  for (const r of results) {
+    const ts = (r.ts || '').replace('T', ' ').slice(0, 19);
+    const cwd = (r.cwd || '').replace(os.homedir(), '~');
+    console.log(`${t.dim}${ts}${t.reset}  ${t.accent}${r.model || '?'}${t.reset}  ${t.dim}${cwd}${t.reset}`);
+    const lines = String(r.prompt || '').split('\n');
+    for (const line of lines.slice(0, 3)) console.log(`  ${line}`);
+    if (lines.length > 3) console.log(`  ${t.dim}… (${lines.length - 3} more lines)${t.reset}`);
+    console.log('');
+  }
+  console.log(`${t.dim}History: ${history.HISTORY_PATH}${t.reset}`);
+  console.log(`${t.dim}Filter: cursor+ --history "<query>"  ·  Wipe: cursor+ --history --clear${t.reset}\n`);
+  process.exit(0);
+}
+
+// ── Snippets / bookmarks browser ───────────────────────────────────────────
+
+function runSnippets() {
+  const t = theme.get(cfg.load());
+  const idx = ARGV.indexOf('--snippets') !== -1 ? ARGV.indexOf('--snippets') : ARGV.indexOf('--bookmarks');
+  const rest = ARGV.slice(idx + 1).filter(a => !a.startsWith('-'));
+  const query = rest.join(' ').trim();
+  const items = bookmarks.list({ query });
+  if (!items.length) {
+    console.log(query
+      ? `No bookmarks match "${query}".`
+      : 'No bookmarks yet — press Ctrl+B inside cursor+ to bookmark the last response.');
+    process.exit(0);
+  }
+  console.log(`\n${t.bold}${items.length} bookmark${items.length === 1 ? '' : 's'}${query ? ` for "${query}"` : ''}${t.reset}\n`);
+  for (const b of items) {
+    const ts = (b.ts || '').replace('T', ' ').slice(0, 19);
+    console.log(`${t.bold}${b.title || '(untitled)'}${t.reset}`);
+    console.log(`${t.dim}${ts}  id:${b.id}${t.reset}`);
+    const lines = String(b.body || '').split('\n').slice(0, 6);
+    for (const l of lines) console.log(`  ${l}`);
+    if ((b.body || '').split('\n').length > 6) console.log(`  ${t.dim}… (truncated)${t.reset}`);
+    console.log('');
+  }
+  console.log(`${t.dim}Storage: ${bookmarks.BOOKMARKS_PATH}${t.reset}\n`);
+  process.exit(0);
+}
+
+function printHelp() {
+  const t = theme.get(cfg.load());
+  console.log(`\n${t.bold}cursor+${t.reset} ${t.dim}v${VERSION}${t.reset}`);
+  console.log(`${t.dim}Voice + click-to-caret + TTS + screenshots — drop-in wrapper for the Cursor Agent CLI.${t.reset}\n`);
+  console.log(`${t.bold}USAGE${t.reset}`);
+  console.log(`  cursor+                   launch with all enhancements`);
+  console.log(`  cursor+ --setup           check dependencies + pick mic + download whisper model`);
+  console.log(`  cursor+ --doctor          validate config and environment`);
+  console.log(`  cursor+ --preferences     re-run setup`);
+  console.log(`  cursor+ --history [q]     search past prompts (--clear to wipe)`);
+  console.log(`  cursor+ --snippets        browse bookmarked responses`);
+  console.log(`  cursor+ --version         print version and exit`);
+  console.log(`  cursor+ --help-plus / -h  print this help (use --help to forward to cursor-agent)\n`);
+  console.log(`${t.bold}HOTKEYS${t.reset} (inside cursor+)`);
+  console.log(`  ${t.bold}Hold Space${t.reset}        hold-to-talk (Kitty terminals — Kitty, WezTerm, Ghostty)`);
+  console.log(`  ${t.bold}Ctrl+Space${t.reset}        toggle voice record (everywhere)`);
+  console.log(`  ${t.bold}Click in prompt${t.reset}   reposition caret (SGR mouse)`);
+  console.log(`  ${t.bold}?${t.reset}                  show in-app cheatsheet`);
+  console.log(`  Ctrl+T              text-to-speech`);
+  console.log(`  Ctrl+P              screenshot → @path`);
+  console.log(`  Ctrl+Y              paste clipboard (text or image)`);
+  console.log(`  Ctrl+S              stash current prompt draft`);
+  console.log(`  Ctrl+B              bookmark last response`);
+  console.log(`  Ctrl+G              open draft in $EDITOR (passthrough — Cursor native)`);
+  console.log(`  Ctrl+C (recording)  cancel voice recording`);
+  console.log(`  Enter (busy)        queue prompt until response settles\n`);
+  console.log(`${t.bold}NOTES${t.reset}`);
+  console.log(`  Ctrl+R is reserved for Cursor's code-review overlay — never stolen by cursor+.`);
+  console.log(`  Voice audio stays local: ffmpeg → whisper.cpp on your machine.`);
+  console.log(`  Config: ${cfg.CONFIG_PATH}`);
+  console.log(`  Log:    ${logger.LOG_PATH}\n`);
+}

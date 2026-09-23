@@ -1,0 +1,11 @@
+node_modules/
+models/
+*.wav
+*.png
+*.log
+*.log.*
+.DS_Store
+.npm/
+coverage/
+.idea/
+.vscode/
