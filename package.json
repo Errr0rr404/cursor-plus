@@ -1,6 +1,6 @@
 {
   "name": "cursor-plus",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Voice + click-to-caret + TTS + screenshots — drop-in wrapper for the Cursor Agent CLI",
   "bin": {
     "cursor+": "bin/cursor+"
