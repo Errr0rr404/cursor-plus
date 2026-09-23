@@ -22,8 +22,6 @@
  * detects desync on the next click and falls back to Home + N× Right.
  */
 
-const KITTY_HALF_BLOCK_W = 1;     // approximate visual width for fallback math
-
 class MouseCaret {
   constructor(opts = {}) {
     this.cols = opts.cols || 80;
@@ -131,19 +129,23 @@ class MouseCaret {
   }
 
   /**
-   * Parse an SGR-encoded mouse event from the PTY stream.
-   * Returns { kind, row, col } or null.
+   * Parse an SGR-encoded mouse event. Returns one of:
+   *   { kind: 'left-press', row, col, button } — caller should re-position the caret
+   *   { kind: 'ignored', row, col, button }   — right-click, release, wheel, etc. (consumed)
+   *   null                                    — `buf` doesn't look like SGR mouse at all
    *
    * SGR format:  CSI < button ; col ; row M | m
-   *   press   → ends in M
-   *   release → ends in m
-   *   wheel / drag codes have button bits set.
+   *   press   → ends in M (uppercase)
+   *   release → ends in m (lowercase)
+   *   wheel / drag / hover → button bits set
    *
-   * We only care about left-press for now; hover / drag are ignored.
+   * We only act on left-press; everything else is consumed so it
+   * doesn't leak into the prompt as text.
    */
   parseSgrMouseEvent(buf) {
-    // Match ESC [ <button> ; <col> ; <row> M
-    const m = /\x1b\[<(\d+);(\d+);(\d+)([Mm])/.exec(buf);
+    // Anchor the match so the regex doesn't grab a partial CSI sequence
+    // that happens to contain "<N;N;N" later in the buffer.
+    const m = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(buf);
     if (!m) return null;
     const button = parseInt(m[1], 10);
     const col    = parseInt(m[2], 10);
@@ -222,6 +224,9 @@ class MouseCaret {
   /**
    * Absolute fallback when the shadow drifts past a threshold.
    * Returns Home + (to) × Right.
+   *
+   * Exposed for callers that detect desync (e.g. bracketed paste) and
+   * want to abandon relative arrows in favour of an absolute jump.
    */
   buildAbsoluteMove(to) {
     const right = '\x1b[C';

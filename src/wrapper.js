@@ -83,9 +83,7 @@ class CursorPlusWrapper {
     this._shell = null;
     this._pid = process.pid;
 
-    this._busy = false;
     this._ttsOn = !!(cfg.tts && cfg.tts.enabled);
-    this._recording = false;
     this._inputBuf = '';
     this._inputCursor = 0;
     this._responseBuf = '';
@@ -96,13 +94,15 @@ class CursorPlusWrapper {
     this._lastOutputAt = 0;
     this._onStdin = null;
     this._ttsQueue = Promise.resolve();
-    this._waitingNotified = false;
 
     // Hold-Space state
     this._spacePressed = false;
     this._holdSpaceSupported = false;
     this._holdSpaceTimer = null;
     this._holdSpaceArmed = false; // true once hold threshold elapsed & recording started
+    this._holdSpaceMs = (cfg.voice && Number.isFinite(cfg.voice.holdSpaceMs))
+      ? cfg.voice.holdSpaceMs
+      : 180;
 
     // Input CSI assembly (Kitty CSI-u + SGR mouse can arrive split across reads)
     this._csiBuf = '';
@@ -180,7 +180,7 @@ class CursorPlusWrapper {
 
     // Friendly first-screen hint nudging discoverability.
     setTimeout(() => {
-      if (!this._busy && !this._recording && !this.cheatsheet.isOpen) {
+      if (!this.voice.isRecording && !this.cheatsheet.isOpen) {
         process.stderr.write(
           `\x1b[2m  cursor+ ready · press ? for help, Hold Space to dictate (Ctrl+Space fallback)\x1b[0m\n`
         );
@@ -332,9 +332,8 @@ class CursorPlusWrapper {
     }
 
     // ── Hold-Space state machine (Kitty protocol) ──────────────────────
-    // Short taps (< HOLD_MS) inject a normal space so typing still works.
+    // Short taps (< voice.holdSpaceMs) inject a normal space so typing still works.
     // Holding past the threshold starts recording; release stops + transcribes.
-    const HOLD_MS = 180;
     if (this._holdSpaceSupported && this.cfg.voice && this.cfg.voice.holdSpace !== false) {
       if (keys.isSpacePress(key) && !keys.isCtrlSpace(key)) {
         if (this._spacePressed) return; // ignore repeat while held
@@ -344,7 +343,7 @@ class CursorPlusWrapper {
         this._holdSpaceTimer = setTimeout(() => {
           this._holdSpaceArmed = true;
           this._startVoice();
-        }, HOLD_MS);
+        }, this._holdSpaceMs);
         return;
       }
       if (keys.isSpaceRelease(key)) {
@@ -454,11 +453,9 @@ class CursorPlusWrapper {
     this._inputCursor = 0;
     this._awaitingResponse = true;
     this._awaitingSince = Date.now();
-    this._busy = true;
     if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
       this.mouse.setBuffer('');
     }
-    setImmediate(() => { this._busy = false; });   // best-effort busy hint
     this._shell.write('\r');
   }
 
@@ -499,7 +496,6 @@ class CursorPlusWrapper {
     if (this.voice.isRecording) return;
     try {
       this.voice.start();
-      this._recording = true;
       this._notify('🎙 Recording', 'Hold Space / Ctrl+Space to stop');
       // Barge-in: stop any in-flight TTS.
       try { this.tts.stop(); } catch {}
@@ -511,7 +507,6 @@ class CursorPlusWrapper {
 
   async _stopVoice() {
     if (!this.voice.isRecording) return;
-    this._recording = false;
     this._notify('🛑 Transcribing…', '');
     let text = '';
     try {
@@ -549,7 +544,7 @@ class CursorPlusWrapper {
     }
   }
 
-// ── TTS ──────────────────────────────────────────────────────────────────
+  // ── TTS ──────────────────────────────────────────────────────────────────
 
   _toggleTTS() {
     this._ttsOn = !this._ttsOn;

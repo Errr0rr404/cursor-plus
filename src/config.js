@@ -52,6 +52,7 @@ function defaultConfig() {
     agentBin: 'cursor-agent',
     voice: {
       holdSpace: true,
+      holdSpaceMs: 180,        // press duration that triggers record; taps below this type a literal space
       fallbackToggle: 'ctrl-space',
       modelPath: findWhisperModel() || path.join(MODELS_DIR, 'ggml-base.en.bin'),
       audioDevice: null,

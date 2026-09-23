@@ -26,8 +26,11 @@
  * Detect whether the parent terminal supports the Kitty keyboard protocol.
  * Returns true / false. Timeout-safe: never blocks longer than `timeoutMs`.
  *
- * We write `\x1b[?u` (Kitty enable) and a primary-DA request, then read
- * stdin for up to 250ms looking for the Kitty DA1 reply `\x1b[?u`.
+ * We write the Kitty query (`\x1b[?u`) and a primary-DA request (`\x1b[c`),
+ * then watch stdin for up to `timeoutMs` looking for the Kitty reply
+ * `\x1b[?<flags>u`. We deliberately don't short-circuit on the DEC DA1
+ * reply alone — a Kitty-speaking terminal can legitimately send BOTH
+ * (DA1 first, Kitty reply second), and we don't want to mis-detect.
  */
 async function detectKitty(stdin, stdout, timeoutMs = 250) {
   return new Promise(resolve => {
@@ -45,14 +48,14 @@ async function detectKitty(stdin, stdout, timeoutMs = 250) {
 
     const onData = (chunk) => {
       buffer += chunk.toString();
-      // Kitty DA1 reply looks like: \x1b[?<flags>u
-      if (/\x1b\[\?[0-9;]*u/.test(buffer)) {
+      // Kitty reply: CSI ? <flags> u  (e.g. \x1b[?<digit>u or \x1b[?<flags>u).
+      // Match "u" as the terminator so we don't false-match on DA1.
+      if (/\x1b\[\?[0-9;]+u/.test(buffer)) {
         finish(true);
         return;
       }
-      // DEC DA1 reply: \x1b[?...c — if we get this without a Kitty flag,
-      // terminal doesn't speak Kitty.
-      if (/\x1b\[\?[\d;]*c/.test(buffer)) finish(false);
+      // Don't conclude false on a DA1 reply alone — wait for the timer
+      // so a late Kitty reply still wins.
     };
 
     const timer = setTimeout(() => finish(false), timeoutMs);
@@ -182,10 +185,16 @@ const KITTY_CSI_U = /^\x1b\[(\d+)(?::[^;]*)?(?:;([^u]*))?u$/;
  *   { kind: 'press' | 'release' | 'repeat', codepoint, modifiers, text? }
  * or null if `key` doesn't look like CSI-u.
  *
- * Kitty progressive enhancement encodes:
- *   CSI unicode-key-code ; modifiers:event-type u
- * where modifiers is `1 + bitmask` (default 1 = none), and event-type is
- * a sub-field: 1=press (default), 2=repeat, 3=release.
+ * Kitty has two ways to encode the event type:
+ *
+ *   (1) Progressive enhancement:  CSI <key>;<mod>:event-type u
+ *       event-type: 1=press (default if absent), 2=repeat, 3=release
+ *
+ *   (2) Legacy bit in modifiers field:
+ *       bit 4 (value 16) in (modsRaw-1) → release
+ *       bit 5 (value 32) in (modsRaw-1) → repeat
+ *
+ * Some terminals only emit the legacy form. We honour both.
  * See https://sw.kovidgoyal.net/kitty/keyboard-protocol/
  */
 function parseKittyCsiU(key) {
@@ -195,11 +204,22 @@ function parseKittyCsiU(key) {
   const modsField = m[2] != null ? m[2] : '1';
   const [modsRawStr, eventRawStr] = modsField.split(':');
   const modsRaw = parseInt(modsRawStr || '1', 10);
-  const modifiers = Math.max(0, modsRaw - 1);
+  const modifierBits = Math.max(0, modsRaw - 1);
+  // Strip event-type bits from the modifier bitmask (shift/alt/ctrl/super = 0-8).
+  const modifiers = modifierBits & 0x0F;
   const eventType = eventRawStr != null ? parseInt(eventRawStr, 10) : 1;
   let kind = 'press';
-  if (eventType === 3) kind = 'release';
-  else if (eventType === 2) kind = 'repeat';
+  // (1) progressive enhancement sub-field wins when present
+  if (eventRawStr != null) {
+    if (eventType === 3) kind = 'release';
+    else if (eventType === 2) kind = 'repeat';
+  } else if (modifierBits & 0x10) {
+    // (2) legacy release bit
+    kind = 'release';
+  } else if (modifierBits & 0x20) {
+    // (2) legacy repeat bit
+    kind = 'repeat';
+  }
   return { kind, codepoint, modifiers, text: null };
 }
 

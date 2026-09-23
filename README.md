@@ -20,14 +20,14 @@ Inspired by the proven [copilot-plus](https://github.com/Errr0rr404/copilot-plus
 
 ## Install
 
-### npm (primary)
-
 ```bash
 npm install -g cursor-plus
 cursor+ --setup       # picks mic, downloads whisper base.en
-cursor+ --doctor      # validate config + environment
+cursor+ --doctor      # validate config + environment (auto-fixes the node-pty perm trap)
 cursor+               # launch
 ```
+
+> **Always run `cursor+ --doctor` once right after install** (and any time you upgrade). It fixes the common `posix_spawnp failed` error (npm 11+ blocks postinstall scripts by default, so node-pty's spawn-helper ships without the executable bit). `--doctor` detects and chmod's it automatically.
 
 ### From source (dev)
 
@@ -37,6 +37,7 @@ cd cursor-plus
 npm install
 npm link
 cursor+ --setup
+cursor+ --doctor
 ```
 
 ### Homebrew (when tap is live)
@@ -45,6 +46,7 @@ cursor+ --setup
 brew tap <owner>/cursor-plus
 brew install cursor-plus
 cursor+ --setup
+cursor+ --doctor
 ```
 
 ## Requirements
@@ -127,13 +129,15 @@ Config lives at `~/.cursor-plus/config.json`. The full default schema (PLAN §8)
 
 | Symptom | Fix |
 |---------|-----|
-| `posix_spawnp failed` from node-pty | `npm rebuild node-pty` or `chmod +x node_modules/node-pty/prebuilds/<plat>-<arch>/spawn-helper` |
+| `posix_spawnp failed` from node-pty | Run `cursor+ --doctor` — it auto-fixes the spawn-helper permission. If `--doctor` can't write to it (Homebrew install, read-only prefix): `chmod +x "$(npm root -g)/cursor-plus/node_modules/node-pty/prebuilds/*/spawn-helper"` |
 | `Could not locate cursor-agent` | Install Cursor CLI: https://cursor.com. Or `export CURSOR_AGENT_BIN=/path/to/cursor-agent` |
 | Hold-Space does nothing | Your terminal doesn't support the Kitty keyboard protocol. Use **Ctrl+Space** toggle instead, or switch to Kitty / WezTerm / Ghostty. |
 | Mouse clicks do nothing | Confirm your terminal supports SGR mouse reporting and `mouse.enabled` is `true` in config. |
 | Whisper transcription empty | `cursor+ --doctor` will show the model path. Re-run `--setup` to download. |
 | Mic permission denied | Enable terminal app in OS Privacy → Microphone. |
 | `findWhisperModel` finds nothing | Run `cursor+ --setup` to download. |
+
+First-line debugging: **`cursor+ --doctor`** is the canonical starting point — it reports every missing dep, validates the config, and auto-fixes the most common install-time trap. Run it after every install / upgrade.
 
 ## Privacy
 
