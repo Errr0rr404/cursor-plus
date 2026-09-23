@@ -23,13 +23,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      # The runner ships with npm 10.x which doesn't always handle
-      # granular-token publish correctly. Upgrade to a current npm.
+      # npm@latest requires Node 22+; the bundled 10.8.2 mis-handles
+      # granular-token publishes (returns 404 instead of creating the
+      # version). 12.x ships the modern registry API path.
       - name: Upgrade npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@12
 
       - name: Install dependencies (skip lifecycle hooks for speed)
         run: npm ci --ignore-scripts
