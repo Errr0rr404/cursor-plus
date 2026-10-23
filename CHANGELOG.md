@@ -2,6 +2,24 @@
 
 All notable changes to cursor-plus are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.7] — 2026-10-22
+
+### Fixed
+
+- **clipboard:** Linux image paste keeps PNG bytes (`encoding: 'buffer'`) instead of UTF-8 replacement characters
+- **input:** backspace and left/right arrows update the draft buffer; a bare Esc is delivered; Kitty CSI-u keys (Enter, Ctrl+T, Ctrl+/) map back to legacy bytes and key-up events are dropped
+- **keys:** Ctrl+/ opens the cheatsheet again (`\x1f` is no longer treated as Ctrl+Space)
+- **mouse:** wheel and drag are not left-clicks; the prompt row stays on screen when the terminal is shorter than 7 rows
+- **safety:** `redact()` merges overlapping secrets so text after a bearer JWT is kept
+- **queue:** a full queue no longer wipes the draft; a queued prompt is not concatenated onto text the user is still typing
+- **responses:** spoken and bookmarked text is only the latest settled turn, with private CSI and window-title sequences stripped
+- **inject:** clipboard and voice text cannot carry Ctrl+C, Esc, or Ctrl+U into the PTY
+- **tts:** stopping Linux speech does not replay it on the next engine; a newer utterance keeps its process handle; a missing `play`/`aplay` falls back to the OS voice; text that starts with `-` is not parsed as a flag
+- **config:** `null` or non-object `config.json` no longer crashes `load()` or `patch()`
+- **cheatsheet:** the close hint and bottom border stay visible on a 24-row terminal
+- **theme:** `NO_COLOR` disables ANSI colour
+- **release:** Homebrew installs `cursor-plus@#{version}`; manual dispatch uses the typed tag and fails when the npm tarball is missing
+
 ## [0.1.6] — 2026-09-23
 
 ### Fixed

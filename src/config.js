@@ -105,9 +105,14 @@ function defaultConfig() {
   };
 }
 
+function coerceConfig(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value;
+}
+
 function load() {
   const fileConfig = fs.existsSync(CONFIG_PATH)
-    ? (() => { try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch { return {}; } })()
+    ? (() => { try { return coerceConfig(JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))); } catch { return {}; } })()
     : {};
 
   const defaults = defaultConfig();
@@ -169,10 +174,9 @@ function save(config) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
-function patch(updates) {
-  let raw = {};
-  try { raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch {}
-  for (const [key, value] of Object.entries(updates)) {
+function applyPatch(raw, updates) {
+  raw = coerceConfig(raw);
+  for (const [key, value] of Object.entries(updates || {})) {
     if (value !== null && typeof value === 'object' && !Array.isArray(value)
         && raw[key] !== null && typeof raw[key] === 'object' && !Array.isArray(raw[key])) {
       raw[key] = Object.assign({}, raw[key], value);
@@ -180,7 +184,13 @@ function patch(updates) {
       raw[key] = value;
     }
   }
-  save(raw);
+  return raw;
+}
+
+function patch(updates) {
+  let raw = {};
+  try { raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch {}
+  save(applyPatch(raw, updates));
 }
 
 /**
@@ -370,7 +380,7 @@ function listMicDevices() {
 }
 
 module.exports = {
-  load, save, patch, validate, ensureDirs,
+  load, save, patch, applyPatch, coerceConfig, validate, ensureDirs,
   defaultConfig,
   findWhisperModel, findPiperVoice, isUsableWhisperModel,
   detectMicrophone, listMicDevices,

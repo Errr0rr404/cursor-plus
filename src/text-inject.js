@@ -11,7 +11,9 @@
 function sanitizeInjectedText(text) {
   return String(text || '')
     .replace(/\r\n?/g, '\n')
-    .replace(/\n+/g, ' ');
+    .replace(/\n+/g, ' ')
+    // Clipboard / voice text must not arrive as keystrokes (Ctrl+C, ESC, Ctrl+U).
+    .replace(/[\x00-\x1f\x7f]/g, '');
 }
 
 function formatAtPath(abs) {

@@ -12,7 +12,14 @@
 let _name = 'dark';
 let _supportsColor = true;
 
+// https://no-color.org — any present, non-empty value disables colour.
+function _colorAllowed() {
+  const nc = process.env.NO_COLOR;
+  return !(typeof nc === 'string' && nc.length > 0);
+}
+
 function set(name) {
+  _supportsColor = _colorAllowed();
   if (!name) return;
   if (name === 'auto') {
     _name = _pickAuto();
@@ -24,12 +31,13 @@ function set(name) {
 }
 
 function _pickAuto() {
-  if (process.env.NO_COLOR) return 'light';
+  if (!_colorAllowed()) return 'light';
   if (process.env.COLORTERM === 'truecolor' || process.env.TERM === 'xterm-256color') return 'dark';
   return 'dark';
 }
 
 function get(/* cfg */) {
+  _supportsColor = _colorAllowed();
   const codes = _palette(_name);
   return {
     reset:    codes.reset,

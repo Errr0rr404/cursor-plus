@@ -84,9 +84,9 @@ it('parseKittyCsiU strips release bit from modifier bitmask', () => {
   eq(r.kind, 'release');
 });
 
-it('isCtrlSpace covers xterm NUL, rxvt US, and Kitty CSI-u', () => {
+it('isCtrlSpace covers xterm NUL and Kitty CSI-u, not Ctrl+/', () => {
   ok(keys.isCtrlSpace('\x00'));
-  ok(keys.isCtrlSpace('\x1f'));
+  eq(keys.isCtrlSpace('\x1f'), false);
   ok(keys.isCtrlSpace('\x1b[32;5u'));
   ok(keys.isCtrlSpace('\x1b[32;5;u'));
   // Plain space is NOT Ctrl+Space.

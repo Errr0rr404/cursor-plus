@@ -50,10 +50,16 @@ function readText() {
   });
 }
 
-function readImage() {
+// Binary clipboard payloads must stay bytes. The default execFile encoding
+// is utf8, which turns every byte ≥ 0x80 into U+FFFD and corrupts PNGs.
+const IMAGE_EXEC_OPTS = { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 };
+
+function readImage(opts = {}) {
+  const platform = opts.platform || PLATFORM;
+  const exec = opts.execFile || execFile;
   return new Promise((resolve, reject) => {
-    const out = path.join(os.tmpdir(), `cursor-plus-clip-${Date.now()}.png`);
-    if (IS_MAC) {
+    const out = opts.outPath || path.join(os.tmpdir(), `cursor-plus-clip-${Date.now()}.png`);
+    if (platform === 'darwin') {
       // osascript: write clipboard PNG to file
       const script = `set theFile to (open for access POSIX file "${out}" with write permission)
 set theData to the clipboard as «class PNGf»
@@ -68,13 +74,13 @@ return POSIX path of theFile`;
       });
       return;
     }
-    if (IS_LINUX) {
-      execFile('wl-paste', ['--type', 'image/png'], (err, stdout) => {
+    if (platform === 'linux') {
+      exec('wl-paste', ['--type', 'image/png'], IMAGE_EXEC_OPTS, (err, stdout) => {
         if (!err && stdout && stdout.length) {
           fs.writeFileSync(out, stdout);
           return resolve(out);
         }
-        execFile('xclip', ['-selection', 'clipboard', '-t', 'image/png', '-o'], (err2, stdout2) => {
+        exec('xclip', ['-selection', 'clipboard', '-t', 'image/png', '-o'], IMAGE_EXEC_OPTS, (err2, stdout2) => {
           if (!err2 && stdout2 && stdout2.length) {
             fs.writeFileSync(out, stdout2);
             return resolve(out);
@@ -84,7 +90,7 @@ return POSIX path of theFile`;
       });
       return;
     }
-    if (IS_WIN) {
+    if (platform === 'win32') {
       const psCmd = `Add-Type -AssemblyName System.Windows.Forms,System.Drawing; ` +
         `if (Get-Clipboard -Format Image) { ` +
         `  $img = Get-Clipboard -Format Image; ` +
@@ -102,4 +108,4 @@ return POSIX path of theFile`;
   });
 }
 
-module.exports = { readText, readImage };
+module.exports = { readText, readImage, IMAGE_EXEC_OPTS };

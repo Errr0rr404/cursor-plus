@@ -7,8 +7,8 @@ it('isCtrlSpace accepts NUL (xterm)', () => {
   ok(keys.isCtrlSpace('\x00'));
 });
 
-it('isCtrlSpace accepts US (rxvt)', () => {
-  ok(keys.isCtrlSpace('\x1f'));
+it('isCtrlSpace does not treat Ctrl+/ (US) as Ctrl+Space', () => {
+  eq(keys.isCtrlSpace('\x1f'), false);
 });
 
 it('isCtrlSpace accepts Kitty CSI-u form', () => {

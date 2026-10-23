@@ -107,8 +107,15 @@ class CheatSheet {
     lines.push(`${V}${_pad(hint, inner)}${V}`);
     lines.push(`${BL}${H.repeat(inner)}${BR}`);
 
+    // The hint and the bottom border are the last two lines. On a 24-row
+    // terminal the box is taller than the screen; keep those two and drop
+    // middle rows so the overlay still closes cleanly.
     const maxRows = Math.max(8, rows - startRow - 1);
-    const rendered = lines.slice(0, maxRows);
+    let rendered = lines;
+    if (lines.length > maxRows) {
+      const tail = lines.slice(-2);
+      rendered = lines.slice(0, Math.max(0, maxRows - tail.length)).concat(tail);
+    }
 
     let out = '\x1b7';
     for (let i = 0; i < rendered.length; i++) {

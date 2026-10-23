@@ -57,9 +57,15 @@ const QUESTION = '?';
 
 const SETTLE_MS = 800;
 const RESPONSE_BUF_MAX = 16_384;
+const ESC_FLUSH_MS = 50;
 
 function stripAnsi(s) {
-  return s.replace(/\x1b\[[0-9;]*[mA-Za-z]/g, '').replace(/\x1b[()][AB012]/g, '');
+  return String(s)
+    // CSI, including private modes (\x1b[?25l) and intermediates.
+    .replace(/\x1b\[[\x20-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '')
+    // OSC (window titles): ESC ] ... BEL, or ESC ] ... ST.
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b[()][AB012]/g, '');
 }
 
 class CursorPlusWrapper {
@@ -106,6 +112,7 @@ class CursorPlusWrapper {
 
     // Input CSI assembly (Kitty CSI-u + SGR mouse can arrive split across reads)
     this._csiBuf = '';
+    this._escTimer = null;
 
     // Notifications cooldown (session_idle / waiting_input / …)
     const notifyCfg = cfg.notifications || {};
@@ -189,6 +196,7 @@ class CursorPlusWrapper {
   }
 
   _cleanup() {
+    if (this._escTimer) { clearTimeout(this._escTimer); this._escTimer = null; }
     try { keys.disableKitty(process.stdout); } catch {}
     try { keys.disableMouse(process.stdout); } catch {}
     try { this.voice.cancel(); } catch {}
@@ -212,6 +220,8 @@ class CursorPlusWrapper {
     clearTimeout(this._responseSettleTimer);
     this._responseSettleTimer = setTimeout(() => {
       const settled = this._responseBuf.trim();
+      // The next turn must not speak or bookmark everything said before it.
+      this._responseBuf = '';
       if (settled && settled !== this._lastResponse) {
         this._lastResponse = settled;
         if (this._ttsOn) {
@@ -265,6 +275,7 @@ class CursorPlusWrapper {
    * sequences are buffered in `this._csiBuf` until a terminator arrives.
    */
   _assembleKeys(chunk) {
+    if (this._escTimer) { clearTimeout(this._escTimer); this._escTimer = null; }
     const out = [];
     let i = 0;
     while (i < chunk.length) {
@@ -289,6 +300,17 @@ class CursorPlusWrapper {
       out.push(chunk[i]);
       i++;
     }
+    // A lone ESC is not a CSI sequence. Flush it if no continuation arrives,
+    // otherwise the next key is glued on and read as Alt+that key.
+    if (this._csiBuf === '\x1b') {
+      this._escTimer = setTimeout(() => {
+        this._escTimer = null;
+        if (this._csiBuf !== '\x1b') return;
+        this._csiBuf = '';
+        this._dispatchKey('\x1b');
+      }, ESC_FLUSH_MS);
+      if (this._escTimer.unref) this._escTimer.unref();
+    }
     return out;
   }
 
@@ -305,6 +327,14 @@ class CursorPlusWrapper {
   }
 
   _dispatchKey(key) {
+    const parsed = keys.parseKittyCsiU(key);
+    // Release events are not keys. Space release is the exception: hold-to-talk
+    // needs it, and it must not be written into the child if nothing consumes it.
+    if (parsed && parsed.kind === 'release') {
+      const spaceUp = parsed.codepoint === 32 && parsed.modifiers === 0;
+      if (!spaceUp) return;
+    }
+
     // Cheatsheet overlay swallows all keys until closed.
     if (this.cheatsheet.isOpen) {
       this.cheatsheet.handleInput(key);
@@ -326,12 +356,14 @@ class CursorPlusWrapper {
     }
 
     // ── Voice toggle (Ctrl+Space) ───────────────────────────────────────
+    // Match the raw CSI-u form before we collapse it to NUL.
     if (keys.isCtrlSpace(key)) {
       this._toggleVoice();
       return;
     }
 
     // ── Hold-Space state machine (Kitty protocol) ──────────────────────
+    // Runs on the raw key so Shift+Space is not mistaken for a hold.
     // Short taps (< voice.holdSpaceMs) inject a normal space so typing still works.
     // Holding past the threshold starts recording; release stops + transcribes.
     if (this._holdSpaceSupported && this.cfg.voice && this.cfg.voice.holdSpace !== false) {
@@ -362,6 +394,15 @@ class CursorPlusWrapper {
       }
     }
 
+    let dropIfUnconsumed = !!(parsed && parsed.kind === 'release');
+    if (parsed && parsed.kind !== 'release') {
+      // Flags 15: Enter is `\x1b[13u`, Ctrl+T is `\x1b[116;5u`. Hotkeys
+      // compare legacy bytes, so translate before that.
+      const legacy = keys.csiUToLegacy(parsed);
+      if (legacy == null) return;
+      key = legacy;
+    }
+
     // ── TTS / screenshot / clipboard / stash / bookmark ────────────────────
     if (key === CTRL_T) { this._toggleTTS(); return; }
     if (key === CTRL_P) { this._doScreenshot(); return; }
@@ -390,6 +431,7 @@ class CursorPlusWrapper {
       return;
     }
 
+    if (dropIfUnconsumed) return;
     this._forwardText(key);
   }
 
@@ -399,7 +441,12 @@ class CursorPlusWrapper {
     if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
       this.mouse.trackInput(key);
     }
-    this._shell.write(key);
+    if (this._shell) this._shell.write(key);
+    // Ctrl+U / backspace clear the draft. Flush only after that byte is
+    // written, or the queued prompt is painted and then erased.
+    if (!this._inputBuf && (key === CTRL_U || key === '\x7f' || key === '\b' || key === '\x08')) {
+      this._flushHeldQueue();
+    }
   }
 
   _trackInputLine(key) {
@@ -410,6 +457,21 @@ class CursorPlusWrapper {
     }
     if (key === CTRL_U) { this._inputBuf = ''; this._inputCursor = 0; return; }
     if (key === CTRL_C) { return; }
+    if (key === '\x7f' || key === '\b' || key === '\x08') {
+      if (this._inputCursor > 0) {
+        this._inputBuf = this._inputBuf.slice(0, this._inputCursor - 1) + this._inputBuf.slice(this._inputCursor);
+        this._inputCursor -= 1;
+      }
+      return;
+    }
+    if (key === '\x1b[D' || key === '\x1bOD' || key === '\x1b[1D') {
+      if (this._inputCursor > 0) this._inputCursor -= 1;
+      return;
+    }
+    if (key === '\x1b[C' || key === '\x1bOC' || key === '\x1b[1C') {
+      if (this._inputCursor < this._inputBuf.length) this._inputCursor += 1;
+      return;
+    }
     if (key.length === 1 && key.charCodeAt(0) >= 0x20) {
       this._inputBuf = this._inputBuf.slice(0, this._inputCursor) + key + this._inputBuf.slice(this._inputCursor);
       this._inputCursor += key.length;
@@ -422,11 +484,15 @@ class CursorPlusWrapper {
       const pending = this._inputBuf.trim();
       if (pending) {
         const res = this.promptQueue.enqueue(pending);
+        if (!res.ok) {
+          this._notify('📥 Queue full', res.reason || '');
+          return;
+        }
         this._shell.write('\x15');  // clear the line on screen
         this._inputBuf = '';
         this._inputCursor = 0;
-        if (res.ok) this._notify('📥 Queued', `#${res.size} — will send when idle`);
-        else this._notify('📥 Queue full', res.reason || '');
+        if (this.cfg.mouse && this.cfg.mouse.enabled !== false) this.mouse.setBuffer('');
+        this._notify('📥 Queued', `#${res.size} — will send when idle`);
         return;
       }
     }
@@ -459,7 +525,17 @@ class CursorPlusWrapper {
     this._shell.write('\r');
   }
 
+  _flushHeldQueue() {
+    if (this._awaitingResponse) return;
+    if (this._inputBuf && this._inputBuf.length > 0) return;
+    if (!this.promptQueue || this.promptQueue.length === 0) return;
+    this._flushQueueNext();
+  }
+
   _flushQueueNext() {
+    // A draft still on screen would be concatenated with the queued prompt.
+    // Hold the item until the line is empty (submit, Ctrl+U, or backspace).
+    if (this._inputBuf && this._inputBuf.length > 0) return;
     const next = this.promptQueue.dequeue();
     if (!next) return;
     const safe = sanitizeInjectedText(next);
@@ -609,6 +685,7 @@ class CursorPlusWrapper {
     if (this.cfg.mouse && this.cfg.mouse.enabled !== false) {
       this.mouse.setBuffer('');
     }
+    this._flushHeldQueue();
   }
 
   // ── Cheatsheet ───────────────────────────────────────────────────────────
@@ -636,3 +713,6 @@ class CursorPlusWrapper {
 module.exports = CursorPlusWrapper;
 module.exports.CursorPlusWrapper = CursorPlusWrapper;
 module.exports.VERSION = VERSION;
+module.exports.stripAnsi = stripAnsi;
+module.exports.SETTLE_MS = SETTLE_MS;
+module.exports.ESC_FLUSH_MS = ESC_FLUSH_MS;

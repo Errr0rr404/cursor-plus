@@ -156,17 +156,96 @@ const HOTKEYS = {
 /**
  * Match an "Ctrl+Space" key press. Terminals encode this inconsistently:
  *  - some emit \x00 (NUL)
- *  - some emit \x1f
  *  - some emit the Kitty CSI-u form: \x1b[32;5u (space + ctrl)
  * The Kitty form carries the base key (space=32) plus modifier 5 (Ctrl).
+ *
+ * \x1f is Ctrl+/ (and Ctrl+_), which opens the cheatsheet. Treating it as
+ * Ctrl+Space made the voice toggle swallow that key.
  */
 function isCtrlSpace(key) {
   if (!key) return false;
   if (key === '\x00') return true;                // xterm
-  if (key === '\x1f') return true;                // rxvt
   if (/\x1b\[32;5u/.test(key)) return true;       // Kitty CSI-u
   if (/\x1b\[32;5;u/.test(key)) return true;      // Kitty with sub-form
   return false;
+}
+
+/**
+ * Map a Kitty CSI-u press/repeat back to the legacy byte the rest of the
+ * wrapper already understands. Release events return null (callers drop them).
+ *
+ * With `enableKitty` flags 15, Enter arrives as `\x1b[13u` and Ctrl+T as
+ * `\x1b[116;5u` instead of `\r` and `\x14`.
+ */
+function csiUToLegacy(keyOrParsed) {
+  const parsed = (keyOrParsed && typeof keyOrParsed === 'object')
+    ? keyOrParsed
+    : parseKittyCsiU(keyOrParsed);
+  if (!parsed || parsed.kind === 'release') return null;
+
+  const cp = parsed.codepoint;
+  const mods = parsed.modifiers || 0;
+  const ctrl = (mods & 4) !== 0;
+  const alt = (mods & 2) !== 0;
+  const shift = (mods & 1) !== 0;
+
+  let out = null;
+  if (ctrl) {
+    const byte = _ctrlByte(cp);
+    if (byte == null) return null;
+    out = String.fromCharCode(byte);
+  } else if (cp === 13 || cp === 57414) {
+    out = '\r';
+  } else if (cp === 9) {
+    out = shift ? '\x1b[Z' : '\t';
+  } else if (cp === 27) {
+    out = '\x1b';
+  } else if (cp === 127 || cp === 8) {
+    out = '\x7f';
+  } else if (cp === 32) {
+    out = ' ';
+  } else if (cp >= 32 && cp <= 126) {
+    let c = cp;
+    if (shift && c >= 97 && c <= 122) c -= 32;
+    out = String.fromCharCode(c);
+  } else if (cp > 126 && cp < 57344) {
+    try { out = String.fromCodePoint(cp); } catch { return null; }
+  } else {
+    return null;
+  }
+
+  if (alt && out.length === 1) return '\x1b' + out;
+  return out;
+}
+
+// Kitty's C0 mapping for Ctrl+key. Letters use the low 5 bits; the rest
+// follows the protocol table (Ctrl+/ → 31, which is the cheatsheet key).
+function _ctrlByte(cp) {
+  if (cp >= 97 && cp <= 122) return cp & 0x1f;
+  if (cp >= 65 && cp <= 90) return cp & 0x1f;
+  switch (cp) {
+    case 32: return 0;     // Ctrl+Space
+    case 47: return 31;    // Ctrl+/
+    case 50: return 0;     // Ctrl+2
+    case 51: return 27;    // Ctrl+3
+    case 52: return 28;
+    case 53: return 29;
+    case 54: return 30;
+    case 55: return 31;    // Ctrl+7
+    case 56: return 127;   // Ctrl+8
+    case 63: return 127;   // Ctrl+?
+    case 64: return 0;     // Ctrl+@
+    case 91: return 27;    // Ctrl+[
+    case 92: return 28;
+    case 93: return 29;
+    case 94: return 30;
+    case 95: return 31;    // Ctrl+_
+    case 126: return 30;   // Ctrl+~
+    case 48: return 48;    // Ctrl+0 left as the digit
+    case 49: return 49;
+    case 57: return 57;
+    default: return null;
+  }
 }
 
 /**
@@ -271,6 +350,6 @@ module.exports = {
   enableMouse, disableMouse,
   CTRL_CODES, HOTKEYS,
   isCtrlSpace, isSpacePress, isSpaceRelease,
-  parseKittyCsiU, startsWithCsi,
+  parseKittyCsiU, csiUToLegacy, startsWithCsi,
   matchesHotkey, KITTY_CSI_U,
 };

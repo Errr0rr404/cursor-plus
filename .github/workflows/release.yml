@@ -62,17 +62,33 @@ jobs:
 
       - name: Compute npm tarball sha256
         id: sha
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          # workflow_dispatch checks out the branch, so GITHUB_REF_NAME is
+          # "main" there. The typed tag is the version we actually released.
+          if [ -n "$INPUT_TAG" ]; then
+            VERSION="${INPUT_TAG#v}"
+          else
+            VERSION="${REF_NAME#v}"
+          fi
           URL="https://registry.npmjs.org/cursor-plus/-/cursor-plus-${VERSION}.tgz"
           # npm CDN can lag a few seconds behind the publish call.
+          downloaded=0
           for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -fsSL "$URL" -o /tmp/cursor-plus.tgz; then
+            if curl -fsSL "$URL" -o /tmp/cursor-plus.tgz && [ -s /tmp/cursor-plus.tgz ]; then
+              downloaded=1
               break
             fi
+            rm -f /tmp/cursor-plus.tgz
             echo "  retry $i (npm CDN not yet serving $VERSION)…"
             sleep 10
           done
+          if [ "$downloaded" != 1 ]; then
+            echo "error: npm tarball missing or empty: $URL" >&2
+            exit 1
+          fi
           SHA=$(sha256sum /tmp/cursor-plus.tgz | awk '{print $1}')
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"

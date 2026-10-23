@@ -14,7 +14,7 @@ class CursorPlus < Formula
     # Install from the npm registry (not from the local tarball) so the
     # bin shim resolves to a real node_modules/cursor-plus directory
     # rather than a symlink into a brew-temp scratch dir.
-    system "npm", "install", "--prefix", libexec, "cursor-plus@0.1.6"
+    system "npm", "install", "--prefix", libexec, "cursor-plus@#{version}"
 
     # npm --prefix installs the package into libexec/node_modules/<pkg> and
     # creates bin shims in libexec/node_modules/.bin. Symlink them into

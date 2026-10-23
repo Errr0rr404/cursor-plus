@@ -51,13 +51,33 @@ function scan(text) {
 }
 
 function redact(text, findings = scan(text)) {
-  let out = text;
-  // Walk findings in reverse so indices stay valid.
-  for (const f of [...findings].sort((a, b) => b.index - a.index)) {
+  // A bearer token and the JWT inside it occupy overlapping spans. Replacing
+  // the inner match first shifts the outer indexes and eats the text after it.
+  // Merge into a single span, then replace left to right.
+  const spans = [];
+  for (const f of findings || []) {
     const start = f.index;
+    if (typeof start !== 'number' || start < 0) continue;
     const len = (typeof f.length === 'number' && f.length > 0) ? f.length : Math.max(8, (f.snippet || '').length);
-    out = out.slice(0, start) + '[REDACTED]' + out.slice(start + len);
+    spans.push({ start, end: start + len });
   }
+  spans.sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const merged = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
+    else merged.push({ start: span.start, end: span.end });
+  }
+
+  let out = '';
+  let cursor = 0;
+  for (const span of merged) {
+    const start = Math.max(span.start, cursor);
+    out += text.slice(cursor, start) + '[REDACTED]';
+    cursor = Math.max(span.end, start);
+  }
+  out += text.slice(cursor);
   return out;
 }
 

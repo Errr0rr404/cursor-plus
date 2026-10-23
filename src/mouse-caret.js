@@ -28,7 +28,11 @@ class MouseCaret {
     this.rows = opts.rows || 24;
     // The CLI draws the prompt area at the bottom. We track where it
     // starts (1-indexed row) and refresh on resize.
-    this.promptStartRow = opts.promptStartRow || (this.rows - 6);
+    // 1-indexed. `rows - 6` is negative on a short terminal, and `||` would
+    // also treat a legitimate 0 as missing. Clamp the default only.
+    this.promptStartRow = opts.promptStartRow != null
+      ? opts.promptStartRow
+      : Math.max(1, this.rows - 6);
     this.promptWidth    = opts.promptWidth    || this.cols;
     this.wrapIndent     = opts.wrapIndent     || 0;
 
@@ -154,9 +158,10 @@ class MouseCaret {
 
     // Button bitmask (low bits):
     //   0 = left, 1 = middle, 2 = right, 3 = release
-    // We accept left-press only.
+    // Bits 32 / 64 / 128 are drag, wheel, and extra buttons. Those share
+    // low bits with left-press (64 & 3 === 0) and must not move the caret.
     const baseBtn = button & 0x3;
-    const pressed = !release && baseBtn === 0;
+    const pressed = !release && baseBtn === 0 && (button & (32 | 64 | 128)) === 0;
     if (!pressed) return { kind: 'ignored', row, col, button };
     return { kind: 'left-press', row, col, button };
   }
