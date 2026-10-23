@@ -14,7 +14,6 @@
  *   - Ctrl+G is never stolen either (Cursor opens draft in $EDITOR)
  */
 
-const pty = require('node-pty');
 const os  = require('os');
 const path = require('path');
 
@@ -126,6 +125,10 @@ class CursorPlusWrapper {
     });
     logger.info(`spawning cursor-agent: ${resolved.bin} (source=${resolved.source})`);
 
+    // node-pty 1.1.0 ships no Linux prebuild. The release workflow installs
+    // with --ignore-scripts, so a top-level require fails `npm test` on
+    // ubuntu before any test runs. Load it only when a PTY is actually spawned.
+    const pty = require('node-pty');
     const shell = pty.spawn(resolved.bin, this.args, {
       name: process.env.TERM || 'xterm-256color',
       cols: process.stdout.columns || 80,
