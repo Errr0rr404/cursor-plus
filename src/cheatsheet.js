@@ -65,6 +65,7 @@ class CheatSheet {
         ['Ctrl+P',        'Capture screenshot → @path'],
         ['Ctrl+Y',        'Paste clipboard (text or image)'],
         ['Ctrl+S',        'Stash current prompt draft'],
+        ['Ctrl+B',        'Bookmark the last settled reply'],
         ['Ctrl+G',        'Cursor native: open draft in $EDITOR'],
       ]},
       { title: 'Output', items: [
@@ -78,6 +79,8 @@ class CheatSheet {
       { title: 'Tools', items: [
         ['cursor+ --setup',         'Check dependencies + pick mic'],
         ['cursor+ --doctor',        'Validate config + environment'],
+        ['cursor+ --history',       'Past prompts, each with its timestamp'],
+        ['cursor+ --snippets',      'Bookmarked replies, each with its timestamp'],
         ['cursor+ --help-plus',     'Full help'],
         ['cursor+ --version',       'Print version'],
       ]},

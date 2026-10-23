@@ -4,7 +4,7 @@
 >
 > Reference implementation: [`../copilot-plus`](../copilot-plus) (GitHub Copilot CLI wrapper).
 >
-> Status: **planning** · Target bin: `cursor+` · Config: `~/.cursor-plus/`
+> Status: **shipped** · Born 2026-09-23 (`v0.1.0`) · Current release **0.1.7** (2026-10-23) · Bin: `cursor+` · Config: `~/.cursor-plus/`
 
 ---
 
@@ -53,7 +53,7 @@ Sources: Cursor forum feature requests / bug reports, staff replies, and gaps vs
 | Wraps | `cursor-agent` (preferred); never confuse with unrelated `agent` CLIs (e.g. Grok) |
 | Runtime | Node ≥ 18 |
 | Platforms | macOS, Linux, Windows |
-| License | MIT (planned) |
+| License | MIT |
 | Config dir | `~/.cursor-plus/` |
 | Config file | `~/.cursor-plus/config.json` |
 | Models dir | `~/.cursor-plus/models/` |
@@ -299,48 +299,50 @@ Deps: `ffmpeg`, `whisper-cpp` (or bundled/downloaded CLI), mic permission for th
 
 ## 9. Phased delivery
 
-### Phase 0 — Scaffold (empty repo → runnable wrapper)
+### Phase 0 — Scaffold (empty repo → runnable wrapper) — done 2026-09-23
 
-- [ ] `package.json`, MIT `LICENSE`, `.gitignore`
-- [ ] `bin/cursor+` flag dispatch
-- [ ] `src/wrapper.js` PTY forwarder to `cursor-agent`
-- [ ] Binary resolution + refusal of non-Cursor `agent`
-- [ ] `config.js`, logger, cheatsheet stub
-- [ ] `scripts/postinstall.js` (node-pty chmod)
-- [ ] `cursor+ --doctor` / `--version` / `--help-plus`
-- [ ] Zero-dep unit test runner (mirror copilot-plus)
+- [x] `package.json`, MIT `LICENSE`, `.gitignore`
+- [x] `bin/cursor+` flag dispatch
+- [x] `src/wrapper.js` PTY forwarder to `cursor-agent`
+- [x] Binary resolution + refusal of non-Cursor `agent`
+- [x] `config.js`, logger, cheatsheet stub
+- [x] `scripts/postinstall.js` (node-pty chmod)
+- [x] `cursor+ --doctor` / `--version` / `--help-plus`
+- [x] Zero-dep unit test runner (mirror copilot-plus)
 
-**Exit criteria:** `cursor+` opens an interactive Cursor CLI session indistinguishable from bare `cursor-agent` for normal typing.
+**Exit criteria met:** `cursor+` opens an interactive Cursor CLI session indistinguishable from bare `cursor-agent` for normal typing.
 
-### Phase 1 — Twin P0s: Voice + Click-to-caret
+### Phase 1 — Twin P0s: Voice + Click-to-caret — done 2026-09-23
 
-- [ ] Port/adapt `voice.js` (ffmpeg + whisper.cpp)
-- [ ] `keys.js` hold-Space + Ctrl+Space
-- [ ] `mouse-caret.js` SGR mouse + shadow buffer + arrow injection
-- [ ] `text-inject.js`
-- [ ] `--setup` downloads Whisper `base.en` + lists audio devices
-- [ ] Cheatsheet entries; doctor checks for Kitty protocol / mouse
-- [ ] Tests: key parsing, mouse CSI parse, inject sanitize, buffer math
+- [x] Port/adapt `voice.js` (ffmpeg + whisper.cpp)
+- [x] `keys.js` hold-Space + Ctrl+Space
+- [x] `mouse-caret.js` SGR mouse + shadow buffer + arrow injection
+- [x] `text-inject.js`
+- [x] `--setup` downloads Whisper `base.en` + lists audio devices
+- [x] Cheatsheet entries; doctor checks for Kitty protocol / mouse
+- [x] Tests: key parsing, mouse CSI parse, inject sanitize, buffer math
 
-**Exit criteria:** Hold-Space (or Ctrl+Space) dictates into prompt; click repositions caret on short/medium single-line drafts.
+**Exit criteria met:** Hold-Space (or Ctrl+Space) dictates into prompt; click repositions caret on short/medium single-line drafts.
 
-### Phase 2 — Hands-free + multimodal
+### Phase 2 — Hands-free + multimodal — largely done 2026-09-23
 
-- [ ] Piper TTS + OS fallback; Ctrl+T
-- [ ] Screenshot Ctrl+P
-- [ ] Clipboard Ctrl+Y (Windows images)
-- [ ] Notifications on idle
-- [ ] Queue + stash
-- [ ] Safety scanner
-- [ ] Mouse-caret multi-line / wrap improvements
+- [x] Piper TTS + OS fallback; Ctrl+T
+- [x] Screenshot Ctrl+P
+- [x] Clipboard Ctrl+Y (Windows images)
+- [x] Notifications on idle
+- [x] Queue + stash
+- [x] Safety scanner
+- [ ] Mouse-caret multi-line / wrap improvements (deferred; short prompts work)
 
-**Exit criteria:** Can dictate → agent → hear summary; paste/screenshot images into prompt on all three OSes.
+**Exit criteria met:** Can dictate → agent → hear summary; paste/screenshot images into prompt on all three OSes.
 
-### Phase 3 — Power pack
+### Phase 3 — Power pack — partial
 
-- [ ] History, bookmarks, workflows, monitor, plugins, config share
+- [x] History (`cursor+ --history`). Each record has `ts`, the time the prompt was submitted (`~/.cursor-plus/history.jsonl`)
+- [x] Bookmarks (`cursor+ --snippets`, Ctrl+B). Each bookmark has its own `ts`
+- [ ] Workflows, monitor, plugins, config share
 - [ ] Optional wake word, Kokoro TTS engine, mlx-whisper path
-- [ ] Homebrew formula + release automation live
+- [x] Homebrew formula + release automation live (tap `errr0rr404/cursor-plus`, since 0.1.1)
 
 **Exit criteria:** Feature parity with copilot-plus v1.2 where it makes sense for Cursor (minus Copilot-specific quota APIs).
 
@@ -420,12 +422,12 @@ cursor+
 **B. Homebrew (macOS / Linuxbrew)**
 
 ```bash
-brew tap <OWNER>/cursor-plus
+brew tap errr0rr404/cursor-plus
 brew install cursor-plus
 cursor+ --setup
 ```
 
-- Formula lives in a separate tap repo: `homebrew-cursor-plus` (same pattern as `homebrew-copilot-plus`).
+- Formula lives in [`Errr0rr404/homebrew-cursor-plus`](https://github.com/Errr0rr404/homebrew-cursor-plus) (same pattern as `homebrew-copilot-plus`). Live since 2026-09-23.
 - Formula `depends_on`: `node`, `ffmpeg`, `whisper-cpp`.
 - Piper may be downloaded by `--setup` rather than a brew dep (faster iteration).
 - `caveats` block documents model download + hotkeys + `--doctor`.
@@ -452,9 +454,10 @@ File: `.github/workflows/release.yml`
 
 1. **publish-npm**
    - checkout
-   - setup-node 20 + npm registry
-   - `npm ci --ignore-scripts`
+   - setup-node 22, then npm 12 (granular tokens)
+   - `npm ci --ignore-scripts`, then `npm test`
    - `npm publish --access public` with `NPM_TOKEN` secret
+   - `continue-on-error`: a 404 from the publish call must not block the formula job
 
 2. **update-formula** (needs publish-npm; `continue-on-error: true`)
    - checkout tap repo with `HOMEBREW_TAP_TOKEN`
@@ -486,7 +489,7 @@ File: `.github/workflows/release.yml`
 6. [ ] `git tag vX.Y.Z && git push origin main --tags`  
 7. [ ] Confirm GitHub Action: npm publish + formula update  
 8. [ ] `npm view cursor-plus version` matches tag  
-9. [ ] `brew update && brew upgrade cursor-plus` smoke (if tap live)  
+9. [ ] `brew update && brew upgrade cursor-plus` smoke  
 10. [ ] Spot-check `cursor+ --doctor` on clean machine notes in release
 
 ### 11.6 Postinstall / install pitfalls
@@ -566,21 +569,17 @@ Command: `npm test` (zero-dep runner, mirror copilot-plus `tests/run.js`).
 
 ## 15. Open questions (resolve before or during Phase 0)
 
-1. npm / GitHub org owner name for `cursor-plus` and `homebrew-cursor-plus` tap?  
-2. Confirm Ctrl+P / Ctrl+Y free on current `cursor-agent` builds (manual keymap audit).  
-3. Ship Piper binary download in `--setup` vs document `brew install piper-tts` where available?  
-4. First public version tag: `v0.1.0` (voice + mouse only) or wait for Phase 2?
+1. Resolved: npm and GitHub owner is `Errr0rr404`. Tap is `errr0rr404/cursor-plus`.
+2. Confirm Ctrl+P / Ctrl+Y free on current `cursor-agent` builds (manual keymap audit).
+3. Ship Piper binary download in `--setup` vs document `brew install piper-tts` where available?
+4. Resolved 2026-09-23: first public version was `v0.1.0` (voice + mouse + TTS). Current is `v0.1.7` (2026-10-23).
 
 ---
 
-## 16. Immediate next implementation step
+## 16. Where implementation stands
 
-When implementation starts:
-
-1. Initialize `package.json` + `bin/cursor+` + minimal `wrapper.js`.  
-2. Prove passthrough to `cursor-agent`.  
-3. Implement Phase 1 (voice + mouse-caret) before porting the full copilot-plus feature set.
+Implementation started with the first commit on 2026-09-23. Phases 0–2 shipped that day as `v0.1.0`, with the pre-ship fixes in `v0.1.1`. Current release is **0.1.7** (2026-10-23). What is still open is the unchecked Phase 3 list above and the two open questions in §15.
 
 ---
 
-*Last updated: 2026-09-23*
+*Last updated: 2026-10-23*

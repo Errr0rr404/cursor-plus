@@ -18,6 +18,8 @@
 
 Inspired by the proven [copilot-plus](https://github.com/Errr0rr404/copilot-plus) architecture, but tuned for Cursor CLI gaps (no voice, broken mouse positioning, ~6-line input viewport).
 
+**Born** 2026-09-23 (`v0.1.0`). **Current release** 0.1.7 (2026-10-23). The full version list is [CHANGELOG.md](./CHANGELOG.md).
+
 ## Install
 
 ```bash
@@ -32,7 +34,7 @@ cursor+               # launch
 ### From source (dev)
 
 ```bash
-git clone https://github.com/<owner>/cursor-plus.git
+git clone https://github.com/Errr0rr404/cursor-plus.git
 cd cursor-plus
 npm install
 npm link
@@ -40,10 +42,10 @@ cursor+ --setup
 cursor+ --doctor
 ```
 
-### Homebrew (when tap is live)
+### Homebrew
 
 ```bash
-brew tap <owner>/cursor-plus
+brew tap errr0rr404/cursor-plus
 brew install cursor-plus
 cursor+ --setup
 cursor+ --doctor
@@ -74,6 +76,8 @@ cursor+ --doctor
 | **Ctrl+P** | screenshot → `@path` |
 | **Ctrl+Y** | paste clipboard (text or image) |
 | **Ctrl+S** | stash current prompt draft |
+| **Ctrl+B** | bookmark the last settled reply |
+| **Ctrl+/** | open the cheatsheet (same as `?`) |
 | **Ctrl+G** | open draft in `$EDITOR` (passthrough) |
 | **Ctrl+C** *(recording)* | cancel active recording |
 | **Enter** *(busy)* | queue prompt until response settles |
@@ -123,6 +127,24 @@ Config lives at `~/.cursor-plus/config.json`. The full default schema (PLAN §8)
   },
   "theme": "auto"
 }
+```
+
+## History and bookmarks
+
+Every submitted prompt is appended to `~/.cursor-plus/history.jsonl`. The record always includes `ts`, the ISO-8601 time the prompt was submitted, plus `pid`, `cwd`, and the prompt text.
+
+```bash
+cursor+ --history              # newest first, with the timestamp on each line
+cursor+ --history "refactor"   # filter
+cursor+ --history --clear      # wipe the log
+```
+
+**Ctrl+B** bookmarks the last settled reply. Each bookmark stores its own `ts` in `~/.cursor-plus/bookmarks.json`.
+
+```bash
+cursor+ --snippets             # browse bookmarks
+cursor+ --snippets "auth"      # filter by title, body, or tag
+cursor+ --bookmarks            # same command
 ```
 
 ## Troubleshooting

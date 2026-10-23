@@ -45,9 +45,14 @@ class CursorPlus < Formula
         Ctrl+Space         toggle voice record (everywhere)
         Click in prompt    reposition caret (SGR mouse)
         ?                  open in-app cheatsheet
+        Ctrl+B             bookmark the last reply
+        cursor+ --history  past prompts (each line has the time it was sent)
+        cursor+ --snippets bookmarked replies
 
-      Config:  ~/.cursor-plus/config.json
-      Log:     ~/.cursor-plus/cursor-plus.log
+      Config:    ~/.cursor-plus/config.json
+      History:   ~/.cursor-plus/history.jsonl
+      Bookmarks: ~/.cursor-plus/bookmarks.json
+      Log:       ~/.cursor-plus/cursor-plus.log
 
       Hold-Space requires the Kitty keyboard protocol. If your terminal
       doesn't support it, Ctrl+Space is the universal fallback.
